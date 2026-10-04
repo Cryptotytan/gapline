@@ -1,0 +1,12 @@
+node_modules/
+.grok/
+.secrets/
+.vercel/
+.tanstack/
+artifacts/
+attachments/
+screenshots/
+.project_id
+*.log
+data/x-vault.json
+data/smart-wallets.json
