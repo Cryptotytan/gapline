@@ -186,7 +186,7 @@ export const auth = betterAuth({
 
   // Send OAuth failures back to the desk instead of a raw /api/auth/error page.
   onAPIError: {
-    errorURL: "/desk?view=desk",
+    errorURL: "/today",
   },
 
   // Encrypt broker-issued OAuth tokens at rest, and treat the broker's upstreams

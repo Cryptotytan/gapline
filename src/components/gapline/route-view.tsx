@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 export function RouteView() {
   const { state, dispatch } = useDesk();
   const b = state.books.find((x) => x.symbol === state.symbol) ?? state.books[0];
-  const call = classify(b);
+  const call = b ? classify(b) : null;
   const [venue, setVenue] = useState<VenueId>("xstocks");
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
@@ -24,10 +24,16 @@ export function RouteView() {
 
   const asked = Number(draft);
   const quoteSize = Number.isFinite(asked) && asked > 0 ? Math.round(asked * 100) / 100 : 0;
-  const advice = advise(b, quoteSize);
+  const advice = b ? advise(b, quoteSize) : null;
+  const bookSymbol = b?.symbol ?? "";
+  const bookAddress = b?.address ?? "";
+  const bookMark = b?.venues.xstocks.price ?? 0;
+  const bookReference = b?.reference ?? 0;
+  const bookSpot = b?.spot ?? false;
+  const advicePick = advice?.pick;
 
   useEffect(() => {
-    if (!(quoteSize > 0)) {
+    if (!b || !(quoteSize > 0)) {
       setFill(null);
       setQuoting(false);
       return;
@@ -55,7 +61,7 @@ export function RouteView() {
       stop = true;
       window.clearTimeout(timer);
     };
-  }, [b.symbol, b.address, b.venues.xstocks.price, b.reference, quoteSize]);
+  }, [b, bookSymbol, bookAddress, bookMark, bookReference, quoteSize]);
 
   useEffect(() => {
     return () => {
@@ -68,8 +74,9 @@ export function RouteView() {
   }, [state.symbol, quoteSize, venue]);
 
   useEffect(() => {
-    setVenue(b.spot ? "xstocks" : advice.pick);
-  }, [state.symbol, advice.pick, b.spot]);
+    if (!b || !advicePick) return;
+    setVenue(bookSpot ? "xstocks" : advicePick);
+  }, [bookSymbol, advicePick, bookSpot, b]);
 
   function setAmount(raw: string) {
     setPicked(null);
@@ -81,6 +88,8 @@ export function RouteView() {
     dispatch({ type: "size", sizeUsd: size });
     if (size > state.limits.maxSizeUsd) dispatch({ type: "cap", maxSizeUsd: size });
   }
+
+  if (!b || !advice || !call) return <Panel className="p-4 text-sm text-muted">Stocks are still loading.</Panel>;
 
   const simPreview = quoteOrder({
     symbol: b.symbol,
@@ -257,11 +266,12 @@ export function RouteView() {
             </div>
             <dl className="mt-4 grid grid-cols-2 gap-2">
               {[
-                ["You pay", formatUsd(quoteSize)],
-                ["Shares", fill && fill.qty > 0 ? formatQty(fill.qty) : simPreview.qty > 0 ? formatQty(simPreview.qty) : "Set by the pool"],
-                ["You would pay", paid > 0 ? formatUsd(paid) : quoting ? "Checking" : "No quote"],
+                ["You pay", quoteSize > 0 ? formatUsd(quoteSize) : "Type an amount"],
+                ["You would pay", fill ? formatUsd(fill.spentUsd) : quoting ? "Checking the pools" : quoteSize > 0 ? "No quote yet" : "Type an amount"],
+                ["Shares", fill && fill.qty > 0 ? formatQty(fill.qty) : quoting ? "Checking" : "Set by the pool"],
+                ["Share price", fill && fill.paid > 0 ? formatUsd(fill.paid) : quoting ? "Checking" : "No quote"],
                 ["On-chain mark", mark > 0 ? formatUsd(mark) : "No live mark"],
-                ["Venue", fill?.venue ?? VENUES[simPreview.venue].label],
+                ["Venue", fill?.venue ?? VENUES[venue].label],
                 ["Wallet", state.address ? shortAddress(state.address) : "Connect to sign"],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-xl bg-surface px-3 py-2">
@@ -285,6 +295,10 @@ export function RouteView() {
                 type="button"
                 className="h-10 w-full shrink-0 cursor-pointer rounded-xl bg-[#3a2a18] px-4 text-sm font-medium text-[#f3d2a4] shadow-[0_8px_24px_rgba(224,161,90,0.28)] hover:bg-[#4a3420] active:scale-[0.98] sm:w-auto"
                 onClick={() => {
+                  if (!(quoteSize > 0)) {
+                    setWhy("Type an amount first.");
+                    return;
+                  }
                   if (!state.address) {
                     openWalletPicker();
                     return;
@@ -301,14 +315,12 @@ export function RouteView() {
               disabled={sending}
               onClick={() => {
                 const order = { ...simPreview, sizeUsd: quoteSize };
-                if (!state.address) {
-                  openWalletPicker();
+                if (!(quoteSize > 0)) {
+                  setWhy("Type an amount first.");
                   return;
                 }
-                if (state.cash + 0.001 < order.sizeUsd) {
-                  const reason = `The wallet has ${formatUsd(state.cash)}. This buy needs ${formatUsd(order.sizeUsd)}. Use Buy with Card, or send USDT to this wallet.`;
-                  setWhy(reason);
-                  dispatch({ type: "note", title: "Not sent", detail: reason });
+                if (!state.address) {
+                  openWalletPicker();
                   return;
                 }
                 const blocked = order.guard.blockers.find((line) => !line.includes("Wallet balance") && !line.includes("Connect a wallet"));

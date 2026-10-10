@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { BOOKS, VENUES, formatRemain, formatUsd, marketClock } from "@/lib/gapline/model";
 import type { ViewId } from "@/lib/gapline/store";
+import { pathForView } from "@/lib/gapline/paths";
 import { Mark } from "./ui";
 
 const APPLE = BOOKS.find((book) => book.symbol === "AAPL") ?? BOOKS[0];
@@ -53,7 +54,7 @@ function ClockFrame({ onEnter }: { onEnter: (view: ViewId, symbol?: string) => v
     <button type="button" onClick={() => onEnter("desk")} className="rounded-2xl bg-surface p-4 text-left sm:rounded-3xl sm:p-5">
       <p className="text-[11px] tracking-[0.16em] text-primary uppercase">01</p>
       <p className="mt-2 font-display text-2xl leading-none text-fg sm:mt-3 sm:text-3xl" suppressHydrationWarning>
-        {session.open ? "The Market is Open" : "The Market is Closed"}
+        The Market is <span className={session.open ? "text-primary" : "text-down"}>{session.open ? "Open" : "Closed"}</span>
       </p>
       <p className="mt-3 font-display text-2xl tabular-nums text-primary" suppressHydrationWarning>
         {remain}
@@ -67,7 +68,7 @@ export function Landing() {
   const [open, setOpen] = useState(0);
   const navigate = useNavigate();
   function onEnter(view: ViewId, symbol?: string) {
-    navigate({ to: "/desk", search: { view, symbol } });
+    navigate({ to: pathForView(view) ?? "/today", search: symbol ? { symbol } : {} });
   }
 
   if (typeof document !== "undefined") document.documentElement.classList.add("gapline-home");

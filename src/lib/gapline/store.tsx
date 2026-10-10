@@ -21,7 +21,7 @@ import type { LiveNote } from "./rwa";
 
 export type ViewId = "desk" | "route" | "baskets" | "holdings" | "agent" | "explain" | "start" | "live";
 
-export type Activity = { id: number; title: string; detail: string };
+export type Activity = { id: number; title: string; detail: string; wallet?: string };
 
 export type CustomBasket = { id: string; name: string; symbols: string[] };
 
@@ -118,7 +118,7 @@ function note(state: DeskState, title: string, detail: string): DeskState {
   return {
     ...state,
     seq: state.seq + 1,
-    activity: [{ id: state.seq, title, detail }, ...state.activity].slice(0, 24),
+    activity: [{ id: state.seq, title, detail, wallet: state.address ?? "" }, ...state.activity].slice(0, 24),
   };
 }
 

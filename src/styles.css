@@ -56,6 +56,15 @@
   }
 }
 
+@keyframes gapline-drawer {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
 @keyframes gapline-marquee {
   from {
     transform: translateX(0);

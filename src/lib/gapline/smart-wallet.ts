@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { createPublicClient, createWalletClient, http, type Address, type Hex } from "viem";
+import { createPublicClient, createWalletClient, encodeFunctionData, http, parseUnits, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { bsc } from "viem/chains";
 import { authClient, authEnabled, signIn } from "@/lib/auth/client";
@@ -163,6 +163,37 @@ export function exportSmartKey(address?: string) {
   return signingKey;
 }
 
+const erc20Transfer = [
+  {
+    type: "function",
+    name: "transfer",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+] as const;
+
+export async function transferFromSmart(input: { token: string | null; to: string; amount: number }) {
+  if (!account) throw new Error("Open the X wallet before sending.");
+  const to = input.to.trim();
+  if (!/^0x[a-fA-F0-9]{40}$/.test(to)) throw new Error("Enter the address you want to send to.");
+  if (!(input.amount > 0)) throw new Error("Enter an amount.");
+  const units = parseUnits(input.amount.toFixed(8).replace(/\.?0+$/, ""), 18);
+  const wallet = createWalletClient({ account, chain: bsc, transport: http(RPC) });
+  try {
+    if (!input.token) return await wallet.sendTransaction({ to: to as Address, value: units });
+    const data = encodeFunctionData({ abi: erc20Transfer, functionName: "transfer", args: [to as Address, units] });
+    return await wallet.sendTransaction({ to: input.token as Address, data });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (/insufficient funds/i.test(message)) throw new Error("This wallet needs a little BNB for the network fee. Nothing was sent.");
+    throw new Error("The send did not go through. Nothing was confirmed.");
+  }
+}
+
 export const sendWalletCode = createServerFn({ method: "POST" })
   .validator((email: string) => {
     const id = email.trim().toLowerCase();
@@ -206,12 +237,11 @@ function explainX(error: unknown) {
 export async function createSmartWalletWithX() {
   if (!authEnabled) throw new Error("X sign-in is not available right now. Connect a wallet you already have.");
   markPending();
-  const back = new URL("/desk", window.location.origin);
-  const view = new URL(window.location.href).searchParams.get("view");
-  if (view) back.searchParams.set("view", view);
+  const page = window.location.pathname;
+  const back = new URL(page === "/" || page === "/desk" ? "/today" : page, window.location.origin);
   back.searchParams.set("x", "1");
   try {
-    await signIn("grok-x", { callbackURL: `${back.pathname}${back.search}`, errorCallbackURL: "/desk?view=desk&x=1" });
+    await signIn("grok-x", { callbackURL: `${back.pathname}${back.search}`, errorCallbackURL: "/today?x=1" });
   } catch (error) {
     clearPending();
     throw new Error(explainX(error));

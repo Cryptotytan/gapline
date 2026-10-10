@@ -1,10 +1,11 @@
 import { DeskProvider, useDesk, type ViewId } from "@/lib/gapline/store";
-import { formatUsd, nav } from "@/lib/gapline/model";
-import { readAssets, readCash, rememberStocks, shortAddress, watchAccounts } from "@/lib/gapline/wallet";
+import { formatUsd } from "@/lib/gapline/model";
+import { peekAssets, readAssets, readCash, rememberStocks, sendAsset, shortAddress, silentAccount, watchAccounts, type HeldAsset } from "@/lib/gapline/wallet";
 import { activateSavedWallet, describeSmartWallet, disconnectSmart, finishSmartWalletWithX, resumeSmartWallet, xWalletError } from "@/lib/gapline/smart-wallet";
-import { forgetLinked, markForName, pinSavedProvider, readLinked, rememberLinked, type LinkedWallet } from "@/lib/gapline/wallet-book";
+import { disconnectLinked, isDismissed, markForName, pinSavedProvider, readActive, readLinked, rememberLinked, setActive, undismissWallet, type LinkedWallet } from "@/lib/gapline/wallet-book";
 import { ConnectModal } from "./connect-modal";
-import { applyCashPrints, appendCatalog, applyLiveSnapshot, getCashPrints, getCatalog, getLiveSnapshot, getLiveTape, mergeTape, tapeSession } from "@/lib/gapline/rwa";
+import { WalletDrawer } from "./wallet-drawer";
+import { applyCashPrints, appendCatalog, applyChainMarks, applyLiveSnapshot, getCashPrints, getCatalog, getChainMarks, getLiveSnapshot, getLiveTape, mergeTape, tapeSession } from "@/lib/gapline/rwa";
 import { AgentView } from "./agent-view";
 import { BasketsView } from "./baskets-view";
 import { Desk } from "./desk";
@@ -14,7 +15,9 @@ import { LiveView } from "./live-view";
 import { RouteView } from "./route-view";
 import { StartView } from "./start-view";
 import { Mark, XLogo, btnGhost } from "./ui";
-import { Link } from "@tanstack/react-router";
+import { useCurrentUser } from "@/lib/auth/use-current-user";
+import { pathForView, viewFromPath } from "@/lib/gapline/paths";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 const NAV: { id: ViewId; label: string }[] = [
@@ -34,7 +37,17 @@ export function GaplineApp({ initialView, initialSymbol }: { initialView?: ViewI
   );
 }
 
+function assetWorth(asset: HeldAsset, books: { symbol: string; venues: { xstocks: { price: number } }; reference: number | null }[]) {
+  if (asset.usd != null && asset.usd > 0) return asset.usd;
+  const book = books.find((item) => item.symbol === asset.symbol);
+  const price = book?.venues.xstocks.price || book?.reference || 0;
+  return price > 0 ? price * asset.amount : 0;
+}
+
 function Shell() {
+  const user = useCurrentUser();
+  const navigate = useNavigate();
+  const pathname = useRouterState({ select: (router) => router.location.pathname });
   const { state, dispatch } = useDesk();
   useEffect(() => {
     let stop = false;
@@ -82,6 +95,15 @@ function Shell() {
               : { ok: false as const, detail: session.ok ? session.detail : "Prices did not come back." };
           dispatch({ type: "tape", books, marks: merged.marks, live });
           booksRef.current = books;
+          const missing = books.filter((book) => book.address && !(book.venues.xstocks.price > 0)).map((book) => book.address as string);
+          if (missing.length) {
+            void getChainMarks({ data: { addresses: missing.slice(0, 60) } }).then((marks) => {
+              if (stop || !marks.ok) return;
+              const next = applyChainMarks(booksRef.current, marks.prices);
+              booksRef.current = next;
+              dispatch({ type: "tape", books: next, marks: merged.marks, live });
+            });
+          }
         })
         .catch(() => {
           if (stop) return;
@@ -102,6 +124,15 @@ function Shell() {
   }, [dispatch]);
   const dismissed = useRef(false);
   useEffect(() => {
+    const next = pathForView(state.view);
+    if (!next || pathname === next) return;
+    navigate({ to: next });
+  }, [navigate, pathname, state.view]);
+  useEffect(() => {
+    const fromPath = viewFromPath(pathname);
+    if (fromPath && fromPath !== state.view) dispatch({ type: "view", view: fromPath });
+  }, [dispatch, pathname, state.view]);
+  useEffect(() => {
     let stop = false;
     void (async () => {
       const params = new URLSearchParams(window.location.search);
@@ -118,15 +149,15 @@ function Shell() {
       }
       let created = await finishSmartWalletWithX();
       if (stop) return;
-      let address = created ?? (await resumeSmartWallet());
-      if (!address && fromX) {
+      if (!created && fromX) {
         await new Promise((resolve) => window.setTimeout(resolve, 600));
         if (stop) return;
         created = await finishSmartWalletWithX();
-        address = created ?? (await resumeSmartWallet());
       }
-      if (stop || !address) {
-        if (!stop && fromX) {
+      const chosen = created ?? (fromX ? null : readActive());
+      if (!chosen || isDismissed(chosen)) {
+        disconnectSmart();
+        if (fromX) {
           dispatch({
             type: "note",
             title: "X did not connect",
@@ -135,97 +166,100 @@ function Shell() {
         }
         return;
       }
-      if (!created && !fromX && addressRef.current && addressRef.current.toLowerCase() !== address.toLowerCase()) {
-        disconnectSmart();
-        return;
-      }
-      dismissed.current = false;
-      const cash = await readCash(address).catch(() => 0);
-      if (stop || dismissed.current) return;
-      dispatch({ type: "wallet", address, cash });
-      const described = describeSmartWallet(address);
-      rememberLinked({
-        address,
-        name: described?.name ?? "X wallet",
-        kind: described?.kind ?? "x",
-      });
-      setLinked(readLinked());
-      if (created || fromX) {
-        const url = new URL(window.location.href);
-        if (url.searchParams.has("x")) {
+      const described = describeSmartWallet(chosen);
+      const linkedRow = readLinked().find((wallet) => wallet.address.toLowerCase() === chosen.toLowerCase());
+      const kind = described?.kind ?? linkedRow?.kind;
+      if (kind === "x" || created) {
+        const address = created ?? (await resumeSmartWallet());
+        if (stop || !address || address.toLowerCase() !== chosen.toLowerCase() || isDismissed(address)) {
+          if (!created) disconnectSmart();
+          if (fromX || created) {
+            dispatch({
+              type: "note",
+              title: "X did not connect",
+              detail: xWalletError() || "X did not finish signing in. Try Continue with X again.",
+            });
+          }
+          return;
+        }
+        undismissWallet(address);
+        setActive(address);
+        const cash = await readCash(address).catch(() => 0);
+        if (stop) return;
+        dispatch({ type: "wallet", address, cash });
+        rememberLinked({
+          address,
+          name: described?.name ?? linkedRow?.name ?? "X wallet",
+          kind: "x",
+          ...(linkedRow?.image ? { image: linkedRow.image } : {}),
+        });
+        setLinked(readLinked());
+        if (created || fromX) {
+          const url = new URL(window.location.href);
           url.searchParams.delete("x");
           window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+          dispatch({
+            type: "note",
+            title: "Wallet ready",
+            detail: `${shortAddress(address)} is a real BNB Chain wallet. Send USDT or USDC to it when you want to buy.`,
+          });
         }
-        dispatch({
-          type: "note",
-          title: "Wallet ready",
-          detail: `${shortAddress(address)} is a real BNB Chain wallet. Send USDT or USDC to it when you want to buy.`,
-        });
+        return;
       }
+      disconnectSmart();
+      const seen = await silentAccount().catch(() => null);
+      if (seen && seen.toLowerCase() === chosen.toLowerCase()) pinSavedProvider(chosen);
+      const cash = await readCash(chosen).catch(() => 0);
+      if (stop || isDismissed(chosen)) return;
+      setActive(chosen);
+      dispatch({ type: "wallet", address: chosen, cash });
+      setLinked(readLinked());
     })();
     return () => {
       stop = true;
     };
   }, [dispatch]);
-  const addressRef = useRef<string | null>(null);
-  addressRef.current = state.address;
   useEffect(() => {
     return watchAccounts((address) => {
-      if (dismissed.current || !address) return;
-      const current = addressRef.current;
-      if (current && current.toLowerCase() !== address.toLowerCase()) return;
+      const active = readActive();
+      if (!active || !address || address.toLowerCase() !== active.toLowerCase()) return;
+      if (dismissed.current || isDismissed(address)) return;
       readCash(address)
         .catch(() => 0)
         .then((cash) => {
-          if (dismissed.current) return;
+          if (dismissed.current || readActive()?.toLowerCase() !== address.toLowerCase()) return;
           dispatch({ type: "presence", address, cash });
         });
     });
   }, [dispatch]);
-  const [held, setHeld] = useState<string[]>([]);
+  const [heldAssets, setHeldAssets] = useState<HeldAsset[]>([]);
   useEffect(() => {
     if (!state.address) {
-      setHeld([]);
+      setHeldAssets([]);
       return;
     }
+    const known = peekAssets(state.address);
+    if (known) setHeldAssets(known);
     let stop = false;
-    readAssets(state.address)
-      .then((assets) => {
-        if (stop) return;
-        setHeld(
-          assets
-            .filter((asset) => {
-              if (asset.side !== "stock" || asset.amount <= 0.000001) return false;
-              const book = state.books.find((item) => item.symbol === asset.symbol);
-              const price = book?.venues.xstocks.price ?? book?.reference ?? 0;
-              return price <= 0 || price * asset.amount >= 0.01;
-            })
-            .map((asset) => asset.symbol),
-        );
-      })
-      .catch(() => {
-        if (!stop) setHeld([]);
-      });
+    readAssets(state.address, (assets) => {
+      if (!stop) setHeldAssets(assets);
+    }).catch(() => {
+      if (!stop) setHeldAssets([]);
+    });
     return () => {
       stop = true;
     };
-  }, [state.address, state.positions, state.books]);
-  const worth = nav(state.cash, state.positions);
+  }, [state.address]);
+  const held = heldAssets
+    .filter((asset) => asset.side === "stock" && asset.amount >= 0.0001 && assetWorth(asset, state.books) >= 0.5)
+    .map((asset) => asset.symbol);
+  const worth = heldAssets.reduce((sum, asset) => {
+    const value = assetWorth(asset, state.books);
+    return value >= 0.05 ? sum + value : sum;
+  }, 0);
   const [picker, setPicker] = useState(false);
-  const [menu, setMenu] = useState(false);
-  const walletBox = useRef<HTMLDivElement>(null);
+  const [drawer, setDrawer] = useState(false);
   const [linked, setLinked] = useState<LinkedWallet[]>([]);
-  const [copied, setCopied] = useState("");
-  useEffect(() => {
-    if (!menu) return;
-    const close = (event: PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Node && walletBox.current?.contains(target)) return;
-      setMenu(false);
-    };
-    document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
-  }, [menu]);
   useEffect(() => {
     const rows = readLinked();
     for (const row of rows) {
@@ -240,10 +274,22 @@ function Shell() {
     window.addEventListener("gapline:connect", open);
     return () => window.removeEventListener("gapline:connect", open);
   }, [state.address]);
+  useEffect(() => {
+    const picture = user?.profileImageUrl;
+    if (!picture || !state.address) return;
+    const described = describeSmartWallet(state.address);
+    const row = readLinked().find((wallet) => wallet.address.toLowerCase() === state.address?.toLowerCase());
+    if (described?.kind !== "x" && row?.kind !== "x") return;
+    if (row?.image === picture) return;
+    rememberLinked({ address: state.address, name: described?.name ?? row?.name ?? "X wallet", kind: "x", image: picture });
+    setLinked(readLinked());
+  }, [user?.profileImageUrl, state.address]);
   function useWallet(address: string, cash: number, created = false) {
+    undismissWallet(address);
+    setActive(address);
     dismissed.current = false;
     setPicker(false);
-    setMenu(false);
+    setDrawer(false);
     setLinked(readLinked());
     dispatch({ type: "wallet", address, cash });
     if (created) {
@@ -255,26 +301,40 @@ function Shell() {
     }
   }
   function disconnectOne(wallet: LinkedWallet) {
-    const next = forgetLinked(wallet.address);
-    setLinked(next);
-    if (state.address?.toLowerCase() !== wallet.address.toLowerCase()) return;
-    const fallback = next[0];
-    if (!fallback) {
+    const result = disconnectLinked(wallet.address);
+    setLinked(readLinked());
+    if (!result.changed) return;
+    if (!result.active) {
       dismissed.current = true;
-      setMenu(false);
-      if (wallet.kind !== "external") disconnectSmart();
+      setDrawer(false);
+      disconnectSmart();
       pinSavedProvider(wallet.address);
       dispatch({ type: "disconnect" });
       return;
     }
-    if (wallet.kind !== "external") disconnectSmart();
-    void activateSavedWallet(fallback.address).then(() => {
-      pinSavedProvider(fallback.address);
-      readCash(fallback.address)
+    const next = readLinked().find((item) => item.address.toLowerCase() === result.active?.toLowerCase());
+    if (!next) return;
+    if (next.kind !== "x") disconnectSmart();
+    void activateSavedWallet(next.address).then(() => {
+      if (next.kind !== "x") pinSavedProvider(next.address);
+      readCash(next.address)
         .catch(() => 0)
-        .then((cash) => dispatch({ type: "wallet", address: fallback.address, cash }));
+        .then((cash) => {
+          setLinked(readLinked());
+          dispatch({ type: "wallet", address: next.address, cash });
+        });
     });
   }
+  useEffect(() => {
+    const onDisconnect = (event: Event) => {
+      const address = (event as CustomEvent<string>).detail;
+      const wallet = readLinked().find((item) => item.address.toLowerCase() === String(address).toLowerCase());
+      if (wallet) disconnectOne(wallet);
+    };
+    window.addEventListener("gapline:disconnect", onDisconnect);
+    return () => window.removeEventListener("gapline:disconnect", onDisconnect);
+  });
+  const mine = state.activity.filter((item) => (item.wallet ?? "") === (state.address ?? ""));
   return (
     <div className="min-h-screen bg-bg text-fg">
       <header className="sticky top-0 z-30 bg-bg/90 backdrop-blur-md">
@@ -282,20 +342,24 @@ function Shell() {
           <Link to="/" className="font-display text-xl leading-none text-fg sm:text-3xl">
             Gapline
           </Link>
-          <div ref={walletBox} className="relative flex items-center">
+          <div className="relative flex items-center">
             <button
               type="button"
-              aria-expanded={state.address ? menu : picker}
+              aria-expanded={state.address ? drawer : picker}
               className={`inline-flex h-10 cursor-pointer items-center gap-2 rounded-full border px-1.5 pr-2.5 text-sm active:scale-[0.98] sm:h-11 sm:pr-3 ${
                 state.address
                   ? "border-line bg-surface text-fg hover:border-primary"
                   : "border-primary/50 bg-surface text-fg hover:border-primary hover:bg-primary hover:text-primary-fg"
               }`}
-              onClick={() => (state.address ? setMenu((open) => !open) : setPicker(true))}
+              onClick={() => (state.address ? setDrawer((open) => !open) : setPicker(true))}
             >
               {state.address && (linked.find((wallet) => wallet.address.toLowerCase() === state.address?.toLowerCase())?.kind === "x" || describeSmartWallet(state.address)?.kind === "x") ? (
-                <span className="relative grid size-8 min-h-8 min-w-8 shrink-0 place-items-center rounded-full bg-fg text-bg">
-                  <XLogo className="size-3.5" />
+                <span className="relative grid size-8 min-h-8 min-w-8 shrink-0 place-items-center overflow-hidden rounded-full bg-fg text-bg">
+                  {linked.find((wallet) => wallet.address.toLowerCase() === state.address?.toLowerCase())?.image ? (
+                    <img src={linked.find((wallet) => wallet.address.toLowerCase() === state.address?.toLowerCase())?.image} alt="" referrerPolicy="no-referrer" className="size-8 rounded-full object-cover" />
+                  ) : (
+                    <XLogo className="size-3.5" />
+                  )}
                   <span className="absolute right-0 bottom-0 size-2 rounded-full bg-[#8fb56a] ring-2 ring-surface" />
                 </span>
               ) : state.address && markForName(linked.find((wallet) => wallet.address.toLowerCase() === state.address?.toLowerCase())?.name ?? "") ? (
@@ -322,103 +386,53 @@ function Shell() {
                 <span className="mt-1 block truncate text-[11px] leading-none text-current/70">{state.address ? formatUsd(worth) : "BNB Chain"}</span>
               </span>
               {linked.length > 1 && <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[11px] text-primary">{linked.length}</span>}
-              <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" className={`shrink-0 opacity-70 transition ${(state.address ? menu : picker) ? "rotate-180" : ""}`}>
+              <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" className={`shrink-0 opacity-70 transition ${drawer ? "rotate-180" : ""}`}>
                 <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
               </svg>
             </button>
-            {menu && state.address && (
-                <div className="absolute top-[3.25rem] right-0 z-50 w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-3xl border border-line bg-surface shadow-[0_24px_70px_rgba(0,0,0,0.5)]">
-                  <div className="flex items-center justify-between border-b border-line px-4 py-3">
-                    <p className="text-sm text-fg">Wallets</p>
-                    <p className="text-[11px] text-muted">{linked.length || 1} connected</p>
-                  </div>
-                  <ul className="max-h-80 space-y-1 overflow-y-auto p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    {(linked.length ? linked : [{ address: state.address, name: "Wallet", kind: "external" as const }]).map((wallet) => {
-                      const active = wallet.address.toLowerCase() === state.address?.toLowerCase();
-                      const mark = wallet.kind === "x" ? "" : markForName(wallet.name);
-                      return (
-                        <li key={wallet.address} className={`rounded-2xl p-2 ${active ? "bg-raised" : "hover:bg-raised/70"}`}>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
-                              onClick={() => {
-                                void activateSavedWallet(wallet.address).then(() => {
-                                  pinSavedProvider(wallet.address);
-                                  readCash(wallet.address)
-                                    .catch(() => 0)
-                                    .then((cash) => useWallet(wallet.address, cash));
-                                });
-                              }}
-                            >
-                              <span className={`relative grid size-9 min-h-9 min-w-9 shrink-0 place-items-center overflow-hidden rounded-full text-xs font-medium ${wallet.kind === "x" ? "bg-fg text-bg" : "bg-[#14120f] text-primary-fg"}`}>
-                                {wallet.kind === "x" ? (
-                                  <XLogo className="size-4" />
-                                ) : mark ? (
-                                  <img src={mark} alt="" className="size-9 min-h-9 min-w-9 object-contain" />
-                                ) : (
-                                  wallet.address.slice(2, 4).toUpperCase()
-                                )}
-                                {active && <span className="absolute right-0 bottom-0 size-2 rounded-full bg-[#8fb56a] ring-2 ring-raised" />}
-                              </span>
-                              <span className="min-w-0">
-                                <span className="block truncate text-sm text-fg">{wallet.name}</span>
-                                <span className="block text-[11px] text-muted">{shortAddress(wallet.address)}{active ? " · In use" : ""}</span>
-                              </span>
-                            </button>
-                            <button
-                              type="button"
-                              aria-label="Copy address"
-                              className="grid size-8 shrink-0 cursor-pointer place-items-center rounded-full bg-bg text-muted hover:text-fg"
-                              onClick={() => {
-                                void navigator.clipboard.writeText(wallet.address).then(() => {
-                                  setCopied(wallet.address);
-                                  window.setTimeout(() => setCopied(""), 1200);
-                                });
-                              }}
-                            >
-                              {copied === wallet.address ? (
-                                <span className="text-[10px] text-primary">OK</span>
-                              ) : (
-                                <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-                                  <rect x="5" y="5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
-                                  <path d="M4 11H3.5A1.5 1.5 0 0 1 2 9.5v-6A1.5 1.5 0 0 1 3.5 2h6A1.5 1.5 0 0 1 11 3.5V4" fill="none" stroke="currentColor" strokeWidth="1.4" />
-                                </svg>
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              aria-label="Disconnect"
-                              className="grid size-8 shrink-0 cursor-pointer place-items-center rounded-full bg-bg text-muted hover:text-down"
-                              onClick={() => disconnectOne(wallet)}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-                                <path d="M6 2.5h6.5A1.5 1.5 0 0 1 14 4v8a1.5 1.5 0 0 1-1.5 1.5H6" fill="none" stroke="currentColor" strokeWidth="1.4" />
-                                <path d="M7 8H2M4 5.5 1.5 8 4 10.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            </button>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                  <div className="border-t border-line p-2">
-                    <button
-                      type="button"
-                      className="flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-full bg-primary text-sm font-medium text-primary-fg hover:bg-primary/90 active:scale-[0.98]"
-                      onClick={() => {
-                        setMenu(false);
-                        setPicker(true);
-                      }}
-                    >
-                      Add a wallet
-                    </button>
-                  </div>
-                </div>
-            )}
           </div>
         </div>
       </header>
+      {state.address && (
+        <WalletDrawer
+          open={drawer}
+          address={state.address}
+          worth={worth}
+          isX={linked.find((wallet) => wallet.address.toLowerCase() === state.address?.toLowerCase())?.kind === "x" || describeSmartWallet(state.address)?.kind === "x"}
+          linked={linked.length ? linked : [{ address: state.address, name: "Wallet", kind: "external" }]}
+          onClose={() => setDrawer(false)}
+          onBuy={() => {
+            setDrawer(false);
+            dispatch({ type: "view", view: "route" });
+          }}
+          onSwitch={(wallet) => {
+            if (isDismissed(wallet.address)) return;
+            undismissWallet(wallet.address);
+            setActive(wallet.address);
+            dismissed.current = false;
+            const cached = peekAssets(wallet.address) ?? [];
+            const seeded = cached
+              .filter((asset) => asset.symbol === "USDT" || asset.symbol === "USDC")
+              .reduce((sum, asset) => sum + (asset.usd ?? 0), 0);
+            dispatch({ type: "presence", address: wallet.address, cash: seeded });
+            void activateSavedWallet(wallet.address).then(() => {
+              pinSavedProvider(wallet.address);
+              readCash(wallet.address)
+                .catch(() => 0)
+                .then((cash) => {
+                  setLinked(readLinked());
+                  dispatch({ type: "presence", address: wallet.address, cash });
+                });
+            });
+          }}
+          onDisconnect={(wallet) => disconnectOne(wallet)}
+          onAdd={() => {
+            setDrawer(false);
+            setPicker(true);
+          }}
+          onSent={(detail) => dispatch({ type: "note", title: "Sent", detail })}
+        />
+      )}
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-2 px-3 pt-3 sm:gap-3 sm:px-4 sm:pt-4">
         <nav className="flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {NAV.map((item) => {
@@ -463,15 +477,15 @@ function Shell() {
         />
       )}
       <main className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-3 py-3 sm:gap-5 sm:px-4 sm:py-5">
-        {state.activity[0] && state.activity[0].id !== 0 && !(state.activity[0].title === "Wallet connected" && !state.address) && (
+        {mine[0] && mine[0].id !== 0 && !(mine[0].title === "Wallet connected" && !state.address) && (
           <p className="rounded-2xl bg-surface px-4 py-3 text-sm text-pretty text-fg">
-            <span className="text-primary">{state.activity[0].title}.</span> <span className="text-muted">{state.activity[0].detail}</span>
+            <span className="text-primary">{mine[0].title}.</span> <span className="text-muted">{mine[0].detail}</span>
           </p>
         )}
         {state.view === "desk" && <Desk />}
         {state.view === "route" && <RouteView />}
         {state.view === "baskets" && <BasketsView />}
-        {state.view === "holdings" && <HoldingsView />}
+        {state.view === "holdings" && <HoldingsView key={state.address ?? "none"} />}
         {state.view === "agent" && <AgentView />}
         {state.view === "explain" && <ExplainView />}
         {state.view === "start" && <StartView />}
@@ -490,7 +504,7 @@ function Shell() {
             </div>
           </div>
           <ul className="flex flex-col gap-2 px-5 pb-5">
-            {state.activity.slice(0, 5).map((item) => (
+            {mine.slice(0, 5).map((item) => (
               <li key={item.id} className="rounded-xl bg-raised px-3 py-3">
                 <p className="text-sm text-fg">{item.title}</p>
                 <p className="text-xs text-pretty text-muted">{item.detail}</p>

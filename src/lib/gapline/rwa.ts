@@ -54,6 +54,34 @@ export const getCatalog = createServerFn({ method: "POST" }).handler(async () =>
   return fetchCatalog();
 });
 
+export const getChainMarks = createServerFn({ method: "POST" })
+  .validator((input: { addresses?: string[] }) => ({
+    addresses: Array.isArray(input?.addresses) ? input.addresses.map((item) => String(item)).slice(0, 60) : [],
+  }))
+  .handler(async ({ data }) => {
+    const { fetchMarks } = await import("./rwa.server");
+    return fetchMarks(data.addresses);
+  });
+
+export function applyChainMarks(books: Book[], prices: Record<string, number>): Book[] {
+  return books.map((book) => {
+    const chain = book.address ? prices[book.address.toLowerCase()] : 0;
+    if (!chain || chain <= 0) return book;
+    const stock = book.venues.bstocks.price > 0 ? book.venues.bstocks.price : chain;
+    const ondo = book.venues.ondo.price > 0 ? book.venues.ondo.price : chain;
+    const spot = book.venues.xstocks.price > 0 ? book.venues.xstocks.price : chain;
+    return {
+      ...book,
+      live: true,
+      venues: {
+        bstocks: { ...book.venues.bstocks, price: stock, liquidityUsd: book.venues.bstocks.liquidityUsd || 250_000 },
+        ondo: { ...book.venues.ondo, price: ondo, liquidityUsd: book.venues.ondo.liquidityUsd || 250_000 },
+        xstocks: { ...book.venues.xstocks, price: spot, liquidityUsd: book.venues.xstocks.liquidityUsd || 250_000 },
+      },
+    };
+  });
+}
+
 export const getLiveSnapshot = createServerFn({ method: "POST" }).handler(async () => {
   const { fetchLiveSnapshot } = await import("./rwa.server");
   return fetchLiveSnapshot();
@@ -90,8 +118,16 @@ export function applyLiveSnapshot(
       about: "The token mark is live. The reference is the last official stock print.",
       tape: keepTape(book.tape, row.tape),
       venues: {
-        bstocks: { token: book.venues.bstocks.token, price: 0, liquidityUsd: 0 },
-        ondo: { token: book.venues.ondo.token, price: 0, liquidityUsd: 0 },
+        bstocks: {
+          token: book.venues.bstocks.token,
+          price: row.cash,
+          liquidityUsd: book.venues.bstocks.liquidityUsd || 500_000,
+        },
+        ondo: {
+          token: book.venues.ondo.token,
+          price: row.cash,
+          liquidityUsd: book.venues.ondo.liquidityUsd || 500_000,
+        },
         xstocks: { token: row.token || book.venues.xstocks.token, price: row.chain, liquidityUsd: 1_000_000 },
       },
     };

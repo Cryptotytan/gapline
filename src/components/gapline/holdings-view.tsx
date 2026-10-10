@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { useDesk } from "@/lib/gapline/store";
 import { formatUsd, quoteOrder } from "@/lib/gapline/model";
 import { Mark, Panel, btnGhost, btnPrimary, field } from "./ui";
-import { disconnectWallet, readAssets, readCash, sellStock, type HeldAsset } from "@/lib/gapline/wallet";
-import { forgetLinked, openWalletPicker, pinSavedProvider } from "@/lib/gapline/wallet-book";
-import { activateSavedWallet } from "@/lib/gapline/smart-wallet";
+import { peekAssets, readAssets, readCash, sellStock, shortAddress, type HeldAsset } from "@/lib/gapline/wallet";
+import { markForName, openWalletPicker, readLinked } from "@/lib/gapline/wallet-book";
+import { describeSmartWallet } from "@/lib/gapline/smart-wallet";
+import { XLogo } from "./ui";
 
 function amountLabel(amount: number) {
   if (amount >= 1000) return amount.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -57,7 +58,7 @@ export function HoldingsView() {
       if (asset.side !== "stock" || asset.amount <= 0.000001) return false;
       const book = state.books.find((item) => item.symbol === asset.symbol);
       const price = book?.venues.xstocks.price ?? book?.reference ?? 0;
-      return price <= 0 || price * asset.amount >= 0.01;
+      return asset.amount >= 0.0001 && price > 0 && price * asset.amount >= 0.5;
     })
     .sort(byValue);
   const showing = side === "crypto" ? crypto : stocks;
@@ -73,57 +74,62 @@ export function HoldingsView() {
       setAssets([]);
       return;
     }
-    const known = walletCache?.address === state.address ? walletCache.assets : null;
+    const known = peekAssets(state.address) ?? (walletCache?.address === state.address ? walletCache.assets : null);
+    setAssets(known ?? []);
     let stop = false;
-    if (!known) setLoading(true);
-    readAssets(state.address)
-      .then((next) => {
-        if (stop) return;
-        const previous = walletCache?.address === state.address ? walletCache.assets : [];
-        if (!sameHoldings(previous, next)) {
-          setAssets(next);
-          walletCache = { address: state.address as string, assets: next, side: walletCache?.address === state.address ? walletCache.side : "crypto" };
-        }
-      })
-      .catch(() => {
-        if (!stop && !known) setAssets([]);
-      })
-      .finally(() => {
-        if (!stop) setLoading(false);
-      });
+    setLoading(!known?.length);
+    readAssets(state.address, (next) => {
+      if (stop) return;
+      setAssets(next);
+      setLoading(false);
+      walletCache = { address: state.address as string, assets: next, side: walletCache?.address === state.address ? walletCache.side : "crypto" };
+    }).catch(() => {
+      if (!stop && !known) setAssets([]);
+    });
     return () => {
       stop = true;
     };
   }, [state.address]);
 
+  const linked = state.address ? readLinked().find((wallet) => wallet.address.toLowerCase() === state.address?.toLowerCase()) : null;
+  const described = state.address ? describeSmartWallet(state.address) : null;
+  const walletName = linked?.name && linked.name !== "Saved wallet" ? linked.name : described?.name ?? (state.address ? "Wallet" : "");
+  const walletMark = linked?.kind === "x" || described?.kind === "x" ? "x" : markForName(walletName);
+
   return (
     <div className="grid gap-3 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)] lg:gap-4">
-      <Panel className="p-3 sm:p-4">
+      <Panel className="p-4 sm:p-5">
         <p className="text-[11px] tracking-[0.16em] text-primary uppercase">Wallet</p>
-        <p className="mt-1 font-display text-2xl tabular-nums text-fg sm:mt-2 sm:text-4xl">{state.address ? formatUsd(state.cash) : "—"}</p>
-        <p className="mt-1 text-xs text-muted">USDC and USDT ready to spend</p>
+        {state.address ? (
+          <div className="mt-4 flex items-center gap-3 rounded-2xl bg-bg px-3 py-3">
+            {walletMark === "x" && linked?.image ? (
+              <img src={linked.image} alt="" referrerPolicy="no-referrer" className="size-10 shrink-0 rounded-full object-cover" />
+            ) : walletMark === "x" ? (
+              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-fg text-bg">
+                <XLogo className="size-4" />
+              </span>
+            ) : walletMark ? (
+              <img src={walletMark} alt="" className="size-10 shrink-0 rounded-full bg-[#14120f] object-contain" />
+            ) : (
+              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary text-xs text-primary-fg">{state.address.slice(2, 4).toUpperCase()}</span>
+            )}
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium text-fg">{shortAddress(state.address)}</span>
+            </span>
+          </div>
+        ) : null}
+        <p className="mt-4 text-[11px] tracking-[0.16em] text-muted uppercase">Ready to spend</p>
+        <p className="mt-1 font-display text-3xl tabular-nums text-fg sm:text-4xl">{state.address ? formatUsd(state.cash >= 0.05 ? state.cash : 0) : "—"}</p>
+        <p className="mt-1 text-xs text-muted">USDC and USDT on BNB Chain</p>
         {!state.address && <p className="mt-3 text-sm text-pretty text-muted">Connect a wallet to see crypto and stocks.</p>}
-        <div className="mt-4 flex flex-col gap-2">
+        <div className="mt-5 grid gap-2">
           {state.address ? (
             <button
               type="button"
               className={btnGhost}
               onClick={() => {
                 if (!state.address) return;
-                const next = forgetLinked(state.address);
-                disconnectWallet().finally(() => {
-                  const fallback = next[0];
-                  if (!fallback) {
-                    dispatch({ type: "disconnect" });
-                    return;
-                  }
-                  void activateSavedWallet(fallback.address).then(() => {
-                    pinSavedProvider(fallback.address);
-                    readCash(fallback.address)
-                      .catch(() => 0)
-                      .then((cash) => dispatch({ type: "wallet", address: fallback.address, cash }));
-                  });
-                });
+                window.dispatchEvent(new CustomEvent("gapline:disconnect", { detail: state.address }));
               }}
             >
               Disconnect wallet
@@ -154,15 +160,12 @@ export function HoldingsView() {
         }}
         onDone={() => {
           if (!state.address) return;
-          readAssets(state.address)
-            .then((next) => {
-              const previous = walletCache?.address === state.address ? walletCache.assets : assets;
-              if (!sameHoldings(previous, next)) {
-                setAssets(next);
-                remember(next);
-              }
-            })
-            .catch(() => undefined);
+          readAssets(state.address, (next) => {
+            if (!sameHoldings(assets, next)) {
+              setAssets(next);
+              remember(next);
+            }
+          }, true).catch(() => undefined);
         }}
       />
     </div>

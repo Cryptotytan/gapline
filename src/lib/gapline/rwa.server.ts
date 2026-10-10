@@ -338,6 +338,13 @@ async function chainTape(address: string, cash: number): Promise<{ label: string
   return keepServerTape(address, tape);
 }
 
+export async function fetchMarks(addresses: string[]) {
+  const unique = [...new Set(addresses.map((address) => address.toLowerCase()))].filter((address) => address.startsWith("0x")).slice(0, 60);
+  if (!unique.length) return { ok: true as const, prices: {} as Record<string, number> };
+  const prices = await chainPrices(unique);
+  return { ok: true as const, prices };
+}
+
 export function fetchLiveSnapshot(): Promise<LiveSnapshot> {
   if (snapshotCache && Date.now() - snapshotCache.at < 60_000 && snapshotCache.snapshot.ok) return Promise.resolve(snapshotCache.snapshot);
   if (snapshotInflight) return snapshotInflight;

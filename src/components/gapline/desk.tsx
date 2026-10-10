@@ -57,6 +57,7 @@ export function Desk() {
       .sort((a, c) => Math.abs(gapOf(c) ?? 0) - Math.abs(gapOf(a) ?? 0))
       .slice(0, q ? 40 : list.length);
   }, [query, state.books]);
+  if (!selected) return <Panel className="p-4 text-sm text-muted">Stocks are still loading.</Panel>;
 
   return (
     <div className="flex flex-col gap-3 pb-24 lg:gap-4 lg:pb-0">
@@ -108,7 +109,7 @@ function Clock() {
     <section className="rounded-2xl bg-surface px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_12px_28px_rgba(0,0,0,0.18)] sm:px-6 sm:py-6 sm:shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_18px_40px_rgba(0,0,0,0.22)]">
       <p className="text-[11px] tracking-[0.16em] text-primary uppercase">New York</p>
       <p className="mt-1 font-display text-2xl leading-none text-fg sm:mt-2 sm:text-5xl" suppressHydrationWarning>
-        {open ? "The Market is Open" : "The Market is Closed"}
+        The Market is <span className={open ? "text-primary" : "text-down"}>{open ? "Open" : "Closed"}</span>
       </p>
       <p className="mt-2 font-display text-lg tabular-nums text-primary sm:mt-4 sm:text-2xl" suppressHydrationWarning>
         {remain}

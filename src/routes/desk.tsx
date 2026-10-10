@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { GaplineApp } from "@/components/gapline/shell";
+import { createFileRoute, redirect } from "@tanstack/react-router";
+import { pathForView } from "@/lib/gapline/paths";
 import type { ViewId } from "@/lib/gapline/store";
 
 const VIEWS = new Set<ViewId>(["desk", "route", "baskets", "holdings", "agent", "explain", "start", "live"]);
@@ -11,10 +11,14 @@ export const Route = createFileRoute("/desk")({
     ...(search.x === "1" || search.x === 1 ? { x: "1" as const } : {}),
     ...(typeof search.error === "string" && search.error ? { error: search.error } : {}),
   }),
-  component: DeskPage,
+  beforeLoad: ({ search }) => {
+    throw redirect({
+      to: pathForView(search.view) ?? "/today",
+      search: {
+        ...(search.symbol ? { symbol: search.symbol } : {}),
+        ...(search.x ? { x: search.x } : {}),
+        ...(search.error ? { error: search.error } : {}),
+      },
+    });
+  },
 });
-
-function DeskPage() {
-  const { view, symbol } = Route.useSearch();
-  return <GaplineApp initialView={view} initialSymbol={symbol} />;
-}

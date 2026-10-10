@@ -10,13 +10,24 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppRouteImport } from './routes/_app'
 import { Route as DeskRouteImport } from './routes/desk'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as AppBasketRouteImport } from './routes/_app/basket'
+import { Route as AppBuyRouteImport } from './routes/_app/buy'
+import { Route as AppHoldingsRouteImport } from './routes/_app/holdings'
+import { Route as AppRulesRouteImport } from './routes/_app/rules'
+import { Route as AppTodayRouteImport } from './routes/_app/today'
+import { Route as AppWhyRouteImport } from './routes/_app/why'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DeskRoute = DeskRouteImport.update({
@@ -29,6 +40,36 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppBasketRoute = AppBasketRouteImport.update({
+  id: '/basket',
+  path: '/basket',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppBuyRoute = AppBuyRouteImport.update({
+  id: '/buy',
+  path: '/buy',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppHoldingsRoute = AppHoldingsRouteImport.update({
+  id: '/holdings',
+  path: '/holdings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppRulesRoute = AppRulesRouteImport.update({
+  id: '/rules',
+  path: '/rules',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTodayRoute = AppTodayRouteImport.update({
+  id: '/today',
+  path: '/today',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppWhyRoute = AppWhyRouteImport.update({
+  id: '/why',
+  path: '/why',
+  getParentRoute: () => AppRoute,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -39,31 +80,83 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/desk': typeof DeskRoute
   '/login': typeof LoginRoute
+  '/basket': typeof AppBasketRoute
+  '/buy': typeof AppBuyRoute
+  '/holdings': typeof AppHoldingsRoute
+  '/rules': typeof AppRulesRoute
+  '/today': typeof AppTodayRoute
+  '/why': typeof AppWhyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/desk': typeof DeskRoute
   '/login': typeof LoginRoute
+  '/basket': typeof AppBasketRoute
+  '/buy': typeof AppBuyRoute
+  '/holdings': typeof AppHoldingsRoute
+  '/rules': typeof AppRulesRoute
+  '/today': typeof AppTodayRoute
+  '/why': typeof AppWhyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/_app': typeof AppRouteWithChildren
   '/desk': typeof DeskRoute
   '/login': typeof LoginRoute
+  '/_app/basket': typeof AppBasketRoute
+  '/_app/buy': typeof AppBuyRoute
+  '/_app/holdings': typeof AppHoldingsRoute
+  '/_app/rules': typeof AppRulesRoute
+  '/_app/today': typeof AppTodayRoute
+  '/_app/why': typeof AppWhyRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/desk' | '/login' | '/api/auth/$'
+  fullPaths:
+    | '/'
+    | '/desk'
+    | '/login'
+    | '/basket'
+    | '/buy'
+    | '/holdings'
+    | '/rules'
+    | '/today'
+    | '/why'
+    | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/desk' | '/login' | '/api/auth/$'
-  id: '__root__' | '/' | '/desk' | '/login' | '/api/auth/$'
+  to:
+    | '/'
+    | '/desk'
+    | '/login'
+    | '/basket'
+    | '/buy'
+    | '/holdings'
+    | '/rules'
+    | '/today'
+    | '/why'
+    | '/api/auth/$'
+  id:
+    | '__root__'
+    | '/'
+    | '/_app'
+    | '/desk'
+    | '/login'
+    | '/_app/basket'
+    | '/_app/buy'
+    | '/_app/holdings'
+    | '/_app/rules'
+    | '/_app/today'
+    | '/_app/why'
+    | '/api/auth/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AppRoute: typeof AppRouteWithChildren
   DeskRoute: typeof DeskRoute
   LoginRoute: typeof LoginRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
@@ -76,6 +169,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_app': {
+      id: '/_app'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/desk': {
@@ -92,6 +192,48 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/basket': {
+      id: '/_app/basket'
+      path: '/basket'
+      fullPath: '/basket'
+      preLoaderRoute: typeof AppBasketRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/buy': {
+      id: '/_app/buy'
+      path: '/buy'
+      fullPath: '/buy'
+      preLoaderRoute: typeof AppBuyRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/holdings': {
+      id: '/_app/holdings'
+      path: '/holdings'
+      fullPath: '/holdings'
+      preLoaderRoute: typeof AppHoldingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/rules': {
+      id: '/_app/rules'
+      path: '/rules'
+      fullPath: '/rules'
+      preLoaderRoute: typeof AppRulesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/today': {
+      id: '/_app/today'
+      path: '/today'
+      fullPath: '/today'
+      preLoaderRoute: typeof AppTodayRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/why': {
+      id: '/_app/why'
+      path: '/why'
+      fullPath: '/why'
+      preLoaderRoute: typeof AppWhyRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -102,8 +244,29 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AppRouteChildren {
+  AppBasketRoute: typeof AppBasketRoute
+  AppBuyRoute: typeof AppBuyRoute
+  AppHoldingsRoute: typeof AppHoldingsRoute
+  AppRulesRoute: typeof AppRulesRoute
+  AppTodayRoute: typeof AppTodayRoute
+  AppWhyRoute: typeof AppWhyRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppBasketRoute: AppBasketRoute,
+  AppBuyRoute: AppBuyRoute,
+  AppHoldingsRoute: AppHoldingsRoute,
+  AppRulesRoute: AppRulesRoute,
+  AppTodayRoute: AppTodayRoute,
+  AppWhyRoute: AppWhyRoute,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AppRoute: AppRouteWithChildren,
   DeskRoute: DeskRoute,
   LoginRoute: LoginRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,

@@ -371,21 +371,44 @@ export function Batch() {
             return;
           }
           const address = state.address;
-          const orders = state.batch ?? [];
+          const orders = (state.batch ?? []).filter((order) => order.side === "buy" && order.sizeUsd > 0);
+          const blocked = orders.find((order) => !order.guard.ok && !order.guard.blockers[0]?.includes("Wallet balance"));
+          if (!orders.length) {
+            dispatch({ type: "note", title: "Not sent", detail: "Enter an amount for this group first." });
+            return;
+          }
+          if (blocked) {
+            dispatch({ type: "note", title: "Not sent", detail: blocked.guard.blockers[0] ?? "This group was not sent." });
+            return;
+          }
+          const need = orders.reduce((sum, order) => sum + order.sizeUsd, 0);
+          if (state.cash + 0.001 < need) {
+            dispatch({ type: "note", title: "Not sent", detail: `This group needs ${formatUsd(need)}. The wallet has ${formatUsd(state.cash)}.` });
+            return;
+          }
           setSending(true);
           const run = async () => {
             await activateSavedWallet(address);
             pinSavedProvider(address);
+            const cashNow = await readCash(address).catch(() => state.cash);
+            if (cashNow + 0.001 < need) {
+              throw new Error(`This group needs ${formatUsd(need)}. The wallet has ${formatUsd(cashNow)}. Nothing else was sent.`);
+            }
             for (const order of orders) {
-              if (order.side !== "buy" || !(order.sizeUsd > 0)) continue;
               const item = book(order.symbol);
-              await buyStock({
-                address,
-                symbol: order.symbol,
-                sizeUsd: order.sizeUsd,
-                token: stockToken(order.symbol) || item?.address,
-                maxUsd: Math.max(state.limits.maxSizeUsd, order.sizeUsd),
-              });
+              try {
+                await buyStock({
+                  address,
+                  symbol: order.symbol,
+                  sizeUsd: order.sizeUsd,
+                  token: stockToken(order.symbol) || item?.address,
+                  mark: item?.venues.xstocks.price || item?.reference || undefined,
+                  maxUsd: Math.max(state.limits.maxSizeUsd, order.sizeUsd),
+                });
+              } catch (error) {
+                const reason = error instanceof Error ? error.message : "The wallet did not send.";
+                throw new Error(`${order.symbol}: ${reason}`);
+              }
             }
             const cash = await readCash(address);
             dispatch({ type: "wallet", address, cash });

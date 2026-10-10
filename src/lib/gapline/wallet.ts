@@ -1,4 +1,4 @@
-import { smartActive, smartAddress, smartProvider, disconnectSmart } from "./smart-wallet";
+import { smartActive, smartAddress, smartProvider, disconnectSmart, transferFromSmart } from "./smart-wallet";
 
 const BSC = "0x38";
 const KYBER_ROUTER = "0x6131b5fae19ea4f9d964eac0408e4408b66337b5";
@@ -30,6 +30,13 @@ export function rememberStocks(rows: { symbol: string; address: string }[]) {
 
 export function stockToken(symbol: string) {
   return EXTRA[symbol.toUpperCase()] ?? XSTOCK[symbol.toUpperCase()];
+}
+
+export function contractFor(symbol: string) {
+  if (symbol === "USDT") return USDT;
+  if (symbol === "USDC") return USDC;
+  if (symbol === "BNB") return null;
+  return stockToken(symbol) ?? null;
 }
 
 type Provider = {
@@ -118,21 +125,11 @@ function toUnit(usd: number) {
 }
 
 async function tokenBalance(token: string, address: string) {
-  const data = encodeBalance(address);
-  for (const rpc of RPCS) {
-    try {
-      const res = await fetch(rpc, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: token, data }, "latest"] }),
-      });
-      const body = (await res.json()) as { result?: string };
-      if (body.result && body.result !== "0x") return BigInt(body.result);
-    } catch {
-      /* Try the next public node. */
-    }
+  try {
+    return BigInt(await rpcCall(token, encodeBalance(address)));
+  } catch {
+    return 0n;
   }
-  return call(token, data);
 }
 
 export async function readCash(address: string) {
@@ -522,6 +519,7 @@ async function spendable(address: string, sizeUsd: number) {
 }
 
 export async function buyStock(input: { address: string; symbol: string; sizeUsd: number; token?: string; mark?: number; maxUsd?: number }) {
+  if (!(input.sizeUsd > 0)) throw new Error("Type an amount first. Nothing was sent.");
   const tokenOut = input.token ?? stockToken(input.symbol);
   if (!tokenOut) throw new Error("This name has no xStock on BNB Chain. Nothing was sent.");
   const cap = Math.min(ABSOLUTE_CAP, input.maxUsd && input.maxUsd > 0 ? input.maxUsd : ABSOLUTE_CAP);
@@ -544,6 +542,7 @@ export async function buyStock(input: { address: string; symbol: string; sizeUsd
 }
 
 export async function sellStock(input: { address: string; symbol: string; qty: number }) {
+  if (!(input.qty > 0)) throw new Error("Type the amount you want to sell. Nothing was sent.");
   const tokenIn = stockToken(input.symbol);
   if (!tokenIn) throw new Error("This name has no xStock on BNB Chain. Nothing was sent.");
   await ensureBsc(input.address);
@@ -579,7 +578,7 @@ const STOCKS: { symbol: string; name: string; address: string; logo: string }[] 
 ];
 
 const MULTICALL = "0xcA11bde05977b3631167028862bE2a173976CA11";
-const RPCS = ["https://bsc-dataseed.binance.org", "https://bsc-dataseed1.defibit.io"];
+const RPCS = ["https://bsc-dataseed.binance.org", "https://bsc.publicnode.com", "https://bsc-dataseed1.defibit.io", "https://1rpc.io/bnb"];
 
 function word(value: bigint | number) {
   return BigInt(value).toString(16).padStart(64, "0");
@@ -616,27 +615,170 @@ function decodeBalances(result: string, count: number) {
 }
 
 async function rpcCall(to: string, data: string) {
-  for (const rpc of RPCS) {
+  try {
+    return await Promise.any(
+      RPCS.map(async (rpc) => {
+        const res = await fetch(rpc, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to, data }, "latest"] }),
+          signal: AbortSignal.timeout(1600),
+        });
+        const body = (await res.json()) as { result?: string };
+        if (body.result && body.result !== "0x") return body.result;
+        throw new Error("empty");
+      }),
+    );
+  } catch {
     try {
-      const res = await fetch(rpc, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to, data }, "latest"] }),
-      });
-      const body = (await res.json()) as { result?: string };
-      if (body.result && body.result !== "0x") return body.result;
+      return (await provider().request({ method: "eth_call", params: [{ to, data }, "latest"] })) as string;
     } catch {
-      /* try the next public node, then the wallet */
+      throw new Error("empty");
     }
   }
-  return (await provider().request({ method: "eth_call", params: [{ to, data }, "latest"] })) as string;
 }
 
 export type HeldAsset = { symbol: string; name: string; amount: number; side: "crypto" | "stock"; logo?: string; usd: number | null };
 
+const assetCache = new Map<string, { at: number; assets: HeldAsset[] }>();
+const assetFlight = new Map<string, Promise<HeldAsset[]>>();
+const assetListeners = new Map<string, Set<(assets: HeldAsset[]) => void>>();
+const ASSET_TTL = 20_000;
+
+function savedAssets() {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem("gapline.assets.v1") ?? "{}") as Record<string, HeldAsset[]>;
+    for (const [key, assets] of Object.entries(parsed)) {
+      if (Array.isArray(assets) && !assetCache.has(key)) assetCache.set(key, { at: 0, assets });
+    }
+  } catch {
+    /* A private window can block storage. The chain read still runs. */
+  }
+}
+
+function storeAssets(key: string, assets: HeldAsset[], done = true) {
+  const previous = assetCache.get(key);
+  const next = done
+    ? assets
+    : [...assets, ...(previous?.assets.filter((asset) => asset.side === "stock" && !assets.some((item) => item.symbol === asset.symbol)) ?? [])];
+  assetCache.set(key, { at: done ? Date.now() : (previous?.at ?? 0), assets: next });
+  assetListeners.get(key)?.forEach((listener) => listener(next));
+  if (!done || typeof sessionStorage === "undefined") return;
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem("gapline.assets.v1") ?? "{}") as Record<string, HeldAsset[]>;
+    parsed[key] = assets;
+    const entries = Object.entries(parsed).slice(-6);
+    sessionStorage.setItem("gapline.assets.v1", JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    /* The in-memory copy is enough for this visit. */
+  }
+}
+
+export function peekAssets(address: string) {
+  savedAssets();
+  return assetCache.get(address.toLowerCase())?.assets ?? null;
+}
+
+async function nativeBalance(address: string) {
+  try {
+    return await Promise.any(
+      RPCS.map(async (rpc) => {
+        const res = await fetch(rpc, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: [address, "latest"] }),
+          signal: AbortSignal.timeout(1600),
+        });
+        const body = (await res.json()) as { result?: string };
+        if (body.result) return BigInt(body.result);
+        throw new Error("empty");
+      }),
+    );
+  } catch {
+    try {
+      const raw = (await provider().request({ method: "eth_getBalance", params: [address, "latest"] })) as string;
+      return raw ? BigInt(raw) : 0n;
+    } catch {
+      return 0n;
+    }
+  }
+}
+
+function pushHeld(held: HeldAsset[], asset: HeldAsset) {
+  const index = held.findIndex((item) => item.symbol === asset.symbol && item.side === asset.side);
+  if (index >= 0) held[index] = asset;
+  else held.push(asset);
+}
+
+async function loadAssets(address: string) {
+  const key = address.toLowerCase();
+  const stocks = Object.entries({ ...XSTOCK, ...EXTRA }).map(([symbol, token]) => {
+    const known = STOCKS.find((item) => item.symbol === symbol);
+    return { symbol, name: known?.name ?? symbol, address: token, logo: known?.logo, usd: undefined as "stable" | undefined, stock: true };
+  });
+  const stables = WATCH.map((token) => ({ ...token, stock: false }));
+  const held: HeldAsset[] = [];
+  const bnbPromise = bnbUsd();
+  const [native, usdt, usdc] = await Promise.all([nativeBalance(address), tokenBalance(USDT, address), tokenBalance(USDC, address)]);
+  if (fromUnit(native) > 0.0001) {
+    const amount = fromUnit(native);
+    pushHeld(held, { symbol: "BNB", name: "BNB", amount, side: "crypto", logo: "/marks/BNB.png", usd: null });
+  }
+  for (const [token, amount] of [
+    [stables[0], usdt],
+    [stables[1], usdc],
+  ] as const) {
+    const size = fromUnit(amount);
+    if (size <= 0.00000001 || !token) continue;
+    pushHeld(held, { symbol: token.symbol, name: token.name, amount: size, side: "crypto", logo: token.logo, usd: size });
+  }
+  storeAssets(key, held.slice(), false);
+  const bnb = await bnbPromise;
+  if (bnb) {
+    const row = held.find((asset) => asset.symbol === "BNB");
+    if (row) row.usd = row.amount * bnb;
+    storeAssets(key, held.slice(), false);
+  }
+  const chunks: (typeof stocks)[] = [];
+  for (let index = 0; index < stocks.length; index += 80) chunks.push(stocks.slice(index, index + 80));
+  const parts = await Promise.all(chunks.map((chunk) => rpcCall(MULTICALL, encodeBalances(chunk.map((token) => token.address), address)).catch(() => "0x")));
+  chunks.forEach((chunk, chunkIndex) => {
+    const balances = decodeBalances(parts[chunkIndex] ?? "0x", chunk.length);
+    chunk.forEach((token, index) => {
+      const amount = fromUnit(balances[index] ?? 0n);
+      if (amount <= 0.00000001) return;
+      pushHeld(held, { symbol: token.symbol, name: token.name, amount, side: "stock", logo: token.logo, usd: null });
+    });
+  });
+  storeAssets(key, held.slice());
+  return held;
+}
+
+export async function readAssets(address: string, onPartial?: (assets: HeldAsset[]) => void, fresh = false) {
+  const key = address.toLowerCase();
+  savedAssets();
+  const hit = assetCache.get(key);
+  if (hit) onPartial?.(hit.assets);
+  if (hit && !fresh && Date.now() - hit.at < ASSET_TTL) return hit.assets;
+  if (onPartial) {
+    const set = assetListeners.get(key) ?? new Set();
+    set.add(onPartial);
+    assetListeners.set(key, set);
+  }
+  const pending = assetFlight.get(key);
+  if (pending) return pending;
+  const job = loadAssets(address).finally(() => {
+    assetFlight.delete(key);
+    assetListeners.delete(key);
+  });
+  assetFlight.set(key, job);
+  return job;
+}
+
 async function bnbUsd() {
   try {
-    const res = await fetch("https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT", { signal: AbortSignal.timeout(2500) });
+    const res = await fetch("https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT", { signal: AbortSignal.timeout(1200) });
     if (!res.ok) return null;
     const body = (await res.json()) as { price?: string };
     const price = Number(body.price);
@@ -646,47 +788,29 @@ async function bnbUsd() {
   }
 }
 
-export async function readAssets(address: string): Promise<HeldAsset[]> {
-  const stocks = Object.entries({ ...XSTOCK, ...EXTRA }).map(([symbol, token]) => {
-    const known = STOCKS.find((item) => item.symbol === symbol);
-    return { symbol, name: known?.name ?? symbol, address: token, logo: known?.logo, usd: undefined as "stable" | undefined, stock: true };
-  });
-  const tokens = [...WATCH.map((token) => ({ ...token, stock: false })), ...stocks];
-  const chunks: (typeof tokens)[] = [];
-  for (let index = 0; index < tokens.length; index += 180) chunks.push(tokens.slice(index, index + 180));
-  const [native, bnb, ...parts] = await Promise.all([
-    fetch(RPCS[0], {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: [address, "latest"] }),
-    })
-      .then((res) => res.json() as Promise<{ result?: string }>)
-      .then((body) => (body.result ? BigInt(body.result) : 0n))
-      .catch(async () => BigInt((await provider().request({ method: "eth_getBalance", params: [address, "latest"] })) as string)),
-    bnbUsd(),
-    ...chunks.map((chunk) => rpcCall(MULTICALL, encodeBalances(chunk.map((token) => token.address), address)).catch(() => "0x")),
-  ]);
-  const held: HeldAsset[] = [];
-  if (fromUnit(native) > 0.0001) {
-    const amount = fromUnit(native);
-    held.push({ symbol: "BNB", name: "BNB", amount, side: "crypto", logo: "/marks/BNB.png", usd: bnb ? amount * bnb : null });
+export async function sendAsset(input: { from: string; token: string | null; to: string; amount: number }) {
+  const to = input.to.trim();
+  if (!/^0x[a-fA-F0-9]{40}$/.test(to)) throw new Error("Enter the address you want to send to.");
+  if (!(input.amount > 0)) throw new Error("Enter an amount.");
+  if (smartAddress()?.toLowerCase() === input.from.toLowerCase()) {
+    return transferFromSmart({ token: input.token, to, amount: input.amount });
   }
-  chunks.forEach((chunk, chunkIndex) => {
-    const balances = decodeBalances(parts[chunkIndex] ?? "0x", chunk.length);
-    chunk.forEach((token, index) => {
-      const amount = fromUnit(balances[index] ?? 0n);
-      if (amount <= 0.00000001) return;
-      held.push({
-        symbol: token.symbol,
-        name: token.name,
-        amount,
-        side: token.stock ? "stock" : "crypto",
-        logo: token.logo,
-        usd: token.usd === "stable" ? amount : null,
-      });
-    });
-  });
-  return held;
+  await ensureBsc(input.from);
+  const units = BigInt(Math.round(input.amount * 1e8)) * 10n ** 10n;
+  if (units <= 0n) throw new Error("Enter an amount.");
+  if (!input.token) {
+    const eth = await signer(input.from);
+    try {
+      return (await eth.request({
+        method: "eth_sendTransaction",
+        params: [{ from: input.from, to, value: `0x${units.toString(16)}` }],
+      })) as string;
+    } catch (error) {
+      throw new Error(explain(error, "The wallet did not send. Nothing was confirmed."));
+    }
+  }
+  const data = `0xa9059cbb${pad(to)}${units.toString(16).padStart(64, "0")}`;
+  return send(input.from, input.token, data);
 }
 
 export async function disconnectWallet() {

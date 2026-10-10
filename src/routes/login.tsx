@@ -19,7 +19,7 @@ function Login() {
               <button
                 key={provider.providerId}
                 type="button"
-                onClick={() => signIn(provider.providerId, { callbackURL: "/desk?view=desk" })}
+                onClick={() => signIn(provider.providerId, { callbackURL: "/today" })}
                 className="h-11 w-full rounded-full bg-primary text-sm font-medium text-primary-fg"
               >
                 Continue with {provider.label}

@@ -5,6 +5,7 @@ export type LinkedWallet = {
   address: string;
   name: string;
   kind: "external" | "email" | "x";
+  image?: string;
 };
 
 export type InjectedWallet = {
@@ -28,6 +29,8 @@ type EipProvider = {
 };
 
 const KEY = "gapline.wallets.v1";
+const ACTIVE = "gapline.active";
+const DISMISSED = "gapline.dismissed";
 const announced: InjectedWallet[] = [];
 const providers = new Map<string, EipProvider>();
 
@@ -53,6 +56,52 @@ function readRaw(): LinkedWallet[] {
   } catch {
     return [];
   }
+}
+
+export function readActive() {
+  try {
+    return localStorage.getItem(ACTIVE);
+  } catch {
+    return null;
+  }
+}
+
+export function setActive(address: string | null) {
+  if (!address) localStorage.removeItem(ACTIVE);
+  else localStorage.setItem(ACTIVE, address);
+}
+
+function dismissed(): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DISMISSED) ?? "[]") as string[];
+    return Array.isArray(parsed) ? parsed.map((item) => item.toLowerCase()) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function isDismissed(address: string) {
+  return dismissed().includes(address.toLowerCase());
+}
+
+export function dismissWallet(address: string) {
+  const next = dismissed().filter((item) => item !== address.toLowerCase());
+  next.unshift(address.toLowerCase());
+  localStorage.setItem(DISMISSED, JSON.stringify(next.slice(0, 16)));
+}
+
+export function undismissWallet(address: string) {
+  localStorage.setItem(DISMISSED, JSON.stringify(dismissed().filter((item) => item !== address.toLowerCase())));
+}
+
+export function disconnectLinked(address: string) {
+  dismissWallet(address);
+  const wasActive = readActive()?.toLowerCase() === address.toLowerCase();
+  forgetLinked(address);
+  if (!wasActive) return { active: readActive(), changed: false };
+  const fallback = readLinked()[0]?.address ?? null;
+  setActive(fallback);
+  return { active: fallback, changed: true };
 }
 
 export function readLinked() {

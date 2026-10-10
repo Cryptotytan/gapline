@@ -1,5 +1,5 @@
 import { useDesk } from "@/lib/gapline/store";
-import { MARKET, classify, compileRule, dryRun, gapOf, planQuotes } from "@/lib/gapline/model";
+import { btcMove, classify, compileRule, dryRun, formatUsd, gapOf, planQuotes } from "@/lib/gapline/model";
 import { askAgent } from "@/lib/gapline/agent";
 import { buyStock, connectWallet, readCash, sellStock } from "@/lib/gapline/wallet";
 import { Kicker, Panel, btnGhost, btnPrimary } from "./ui";
@@ -18,7 +18,7 @@ const SAMPLES = [
 
 export function AgentView() {
   const { state, dispatch } = useDesk();
-  const btc = state.shock ? -600 : MARKET.btcMoveBps;
+  const btc = state.shock ? -600 : btcMove();
   const rule = state.rule;
   const run = rule ? dryRun(rule, state.positions, state.cash, btc) : null;
   const [reading, setReading] = useState(false);
@@ -89,7 +89,9 @@ export function AgentView() {
       dispatch({ type: "wallet", address: wallet.address, cash: wallet.cash });
       for (const order of quoted.orders) {
         if (order.side === "sell") {
-          const qty = order.sizeUsd / (state.books.find((book) => book.symbol === order.symbol)?.venues.xstocks.price || order.sizeUsd);
+          const price = state.books.find((book) => book.symbol === order.symbol)?.venues.xstocks.price || 0;
+          if (!(price > 0)) throw new Error(`${order.symbol} has no price yet. Nothing was sent.`);
+          const qty = order.sizeUsd / price;
           const sent = await sellStock({ address: wallet.address, symbol: order.symbol, qty });
           const cash = await readCash(wallet.address);
           dispatch({ type: "chain-fill", order, cash, hash: sent.hash });
@@ -105,6 +107,64 @@ export function AgentView() {
         });
         const cash = await readCash(wallet.address);
         dispatch({ type: "chain-fill", order: { ...order, venue: "xstocks", qty: sent.qty }, cash, hash: sent.hash });
+      }
+      dispatch({ type: "view", view: "holdings" });
+    };
+    send()
+      .catch((error: unknown) =>
+        dispatch({
+          type: "note",
+          title: "Not sent",
+          detail: error instanceof Error ? error.message : "The wallet did not send.",
+        }),
+      )
+      .finally(() => setRunning(false));
+  }
+
+  function runSaved() {
+    if (!state.saved.length) return;
+    setRunning(true);
+    const send = async () => {
+      const wallet = state.address ? { address: state.address, cash: state.cash } : await connectWallet();
+      dispatch({ type: "wallet", address: wallet.address, cash: wallet.cash });
+      let sentAny = false;
+      for (const saved of state.saved) {
+        const check = dryRun(saved, state.positions, wallet.cash, btc);
+        if (!check.fired || !check.orders.length) continue;
+        const quoted = planQuotes({
+          orders: check.orders,
+          cash: wallet.cash,
+          positions: state.positions,
+          limits: state.limits,
+          walletReady: true,
+        });
+        for (const order of quoted.orders) {
+          if (!order.guard.ok && !order.guard.blockers[0]?.startsWith("Wallet balance")) continue;
+          const book = state.books.find((item) => item.symbol === order.symbol);
+          const price = book?.venues.xstocks.price || book?.reference || 0;
+          if (order.side === "sell") {
+            if (!(price > 0)) continue;
+            const sent = await sellStock({ address: wallet.address, symbol: order.symbol, qty: order.sizeUsd / price });
+            wallet.cash = await readCash(wallet.address);
+            dispatch({ type: "chain-fill", order, cash: wallet.cash, hash: sent.hash });
+            sentAny = true;
+            continue;
+          }
+          const sent = await buyStock({
+            address: wallet.address,
+            symbol: order.symbol,
+            sizeUsd: order.sizeUsd,
+            maxUsd: state.limits.maxSizeUsd,
+            mark: price || undefined,
+          });
+          wallet.cash = await readCash(wallet.address);
+          dispatch({ type: "chain-fill", order: { ...order, venue: "xstocks", qty: sent.qty }, cash: wallet.cash, hash: sent.hash });
+          sentAny = true;
+        }
+      }
+      if (!sentAny) {
+        dispatch({ type: "note", title: "Rules checked", detail: "Nothing is due on the live tape. Nothing was sent." });
+        return;
       }
       dispatch({ type: "view", view: "holdings" });
     };
@@ -158,7 +218,7 @@ export function AgentView() {
           </button>
         </div>
         <p className="mt-3 text-xs text-muted">
-          The desk tape still has BTC {(MARKET.btcMoveBps / 100).toFixed(1)}% since Friday. The shock only changes this dry-run.
+          Bitcoin is {btc >= 0 ? "up" : "down"} {Math.abs(btc / 100).toFixed(1)}% since the prior close. The shock only changes this check.
         </p>
       </Panel>
       <div className="flex flex-col gap-4">
@@ -182,6 +242,21 @@ export function AgentView() {
             </>
           )}
           {run && rule?.ok && <p className={`mt-4 text-sm text-pretty ${run.fired ? "text-primary" : "text-fg"}`}>{run.reason}</p>}
+          {rule?.ok && (
+            <ul className="mt-3 flex flex-col gap-1">
+              {state.books
+                .filter((book) => book.live && gapOf(book) != null)
+                .slice(0, 6)
+                .map((book) => (
+                  <li key={book.symbol} className="flex items-center justify-between text-xs text-muted">
+                    <span>{book.symbol}</span>
+                    <span className="tabular-nums text-fg">
+                      {book.venues.xstocks.price > 0 ? formatUsd(book.venues.xstocks.price) : "No mark"} · {gapOf(book)} bp
+                    </span>
+                  </li>
+                ))}
+            </ul>
+          )}
           <button type="button" className={`${btnPrimary} mt-3`} disabled={running} onClick={simulate}>
             {running ? "Waiting for wallet" : "Run the rule"}
           </button>
@@ -203,8 +278,8 @@ export function AgentView() {
                 ))}
               </ul>
             )}
-            <button type="button" className={`${btnPrimary} mt-3`} disabled={state.saved.length === 0} onClick={() => dispatch({ type: "run-saved" })}>
-              Run saved rules
+            <button type="button" className={`${btnPrimary} mt-3`} disabled={running || state.saved.length === 0} onClick={runSaved}>
+              {running ? "Waiting for wallet" : "Run saved rules"}
             </button>
           </div>
         </Panel>
