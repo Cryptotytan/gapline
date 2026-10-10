@@ -17,7 +17,7 @@ import { StartView } from "./start-view";
 import { Mark, XLogo, btnGhost } from "./ui";
 import { useCurrentUser } from "@/lib/auth/use-current-user";
 import { pathForView, viewFromPath } from "@/lib/gapline/paths";
-import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 const NAV: { id: ViewId; label: string }[] = [
@@ -123,15 +123,20 @@ function Shell() {
     };
   }, [dispatch]);
   const dismissed = useRef(false);
+  const viewRef = useRef(state.view);
+  viewRef.current = state.view;
   useEffect(() => {
     const next = pathForView(state.view);
-    if (!next || pathname === next) return;
-    navigate({ to: next });
-  }, [navigate, pathname, state.view]);
+    if (!next || next === window.location.pathname) return;
+    void Promise.resolve(navigate({ to: next })).catch(() => {
+      window.location.assign(next);
+    });
+  }, [navigate, state.view]);
   useEffect(() => {
     const fromPath = viewFromPath(pathname);
-    if (fromPath && fromPath !== state.view) dispatch({ type: "view", view: fromPath });
-  }, [dispatch, pathname, state.view]);
+    if (!fromPath || fromPath === viewRef.current) return;
+    dispatch({ type: "view", view: fromPath });
+  }, [dispatch, pathname]);
   useEffect(() => {
     let stop = false;
     void (async () => {
@@ -339,9 +344,9 @@ function Shell() {
     <div className="min-h-screen bg-bg text-fg">
       <header className="sticky top-0 z-30 bg-bg/90 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
-          <Link to="/" className="font-display text-xl leading-none text-fg sm:text-3xl">
+          <a href="/" className="font-display text-xl leading-none text-fg sm:text-3xl">
             Gapline
-          </Link>
+          </a>
           <div className="relative flex items-center">
             <button
               type="button"

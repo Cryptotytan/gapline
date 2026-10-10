@@ -1,4 +1,6 @@
 {
+  "framework": null,
+  "buildCommand": "npm run build",
   "installCommand": "npm install --omit=dev --no-audit --no-fund",
   "regions": ["fra1"],
   "headers": [

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useDesk } from "@/lib/gapline/store";
 import { BASKETS, book, buyPlanFor, classify, driftFor, formatUsd, planQuotes, rebalanceFor, weightsFor, type BasketId } from "@/lib/gapline/model";
 import { buyStock, readCash, stockToken } from "@/lib/gapline/wallet";
@@ -343,7 +343,16 @@ export function BasketsView() {
 export function Batch() {
   const { state, dispatch } = useDesk();
   const [sending, setSending] = useState(false);
+  const [why, setWhy] = useState("");
+  const signature = (state.batch ?? []).map((order) => `${order.symbol}:${order.sizeUsd}:${order.guard.ok}`).join("|");
+  useEffect(() => {
+    setWhy("");
+  }, [signature, state.address]);
   if (!state.batch?.length) return <p className="px-5 pb-5 text-sm text-muted">Preview a buy to see each stock in this group.</p>;
+  function fail(detail: string) {
+    setWhy(detail);
+    dispatch({ type: "note", title: "Not sent", detail });
+  }
   return (
     <div className="px-3 pb-4">
       <ul className="space-y-2">
@@ -361,6 +370,7 @@ export function Batch() {
           );
         })}
       </ul>
+      {why && <p className="mt-3 px-2 text-sm text-pretty text-down">{why}</p>}
       <button
         type="button"
         className={`${btnPrimary} mt-4 w-full`}
@@ -374,16 +384,16 @@ export function Batch() {
           const orders = (state.batch ?? []).filter((order) => order.side === "buy" && order.sizeUsd > 0);
           const blocked = orders.find((order) => !order.guard.ok && !order.guard.blockers[0]?.includes("Wallet balance"));
           if (!orders.length) {
-            dispatch({ type: "note", title: "Not sent", detail: "Enter an amount for this group first." });
+            fail("Enter an amount for this group first.");
             return;
           }
           if (blocked) {
-            dispatch({ type: "note", title: "Not sent", detail: blocked.guard.blockers[0] ?? "This group was not sent." });
+            fail(blocked.guard.blockers[0] ?? "This group was not sent.");
             return;
           }
           const need = orders.reduce((sum, order) => sum + order.sizeUsd, 0);
           if (state.cash + 0.001 < need) {
-            dispatch({ type: "note", title: "Not sent", detail: `This group needs ${formatUsd(need)}. The wallet has ${formatUsd(state.cash)}.` });
+            fail(`This group needs ${formatUsd(need)}. The wallet has ${formatUsd(state.cash)}.`);
             return;
           }
           setSending(true);
@@ -415,13 +425,11 @@ export function Batch() {
             dispatch({ type: "view", view: "holdings" });
           };
           run()
-            .catch((error: unknown) =>
-              dispatch({
-                type: "note",
-                title: "Not sent",
-                detail: error instanceof Error ? error.message : "The wallet did not send.",
-              }),
-            )
+            .catch((error: unknown) => {
+              const detail = error instanceof Error ? error.message : "The wallet did not send.";
+              setWhy(detail);
+              dispatch({ type: "note", title: "Not sent", detail });
+            })
             .finally(() => setSending(false));
         }}
       >
