@@ -14,7 +14,7 @@ import { HoldingsView } from "./holdings-view";
 import { LiveView } from "./live-view";
 import { RouteView } from "./route-view";
 import { StartView } from "./start-view";
-import { Mark, XLogo, btnGhost } from "./ui";
+import { btnGhost, XLogo } from "./ui";
 import { useCurrentUser } from "@/lib/auth/use-current-user";
 import { pathForView, viewFromPath } from "@/lib/gapline/paths";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
@@ -285,9 +285,6 @@ function Shell() {
       window.clearInterval(timer);
     };
   }, [dispatch, state.address]);
-  const held = heldAssets
-    .filter((asset) => asset.side === "stock" && asset.amount >= 0.0001 && assetWorth(asset, state.books) >= 0.5)
-    .map((asset) => asset.symbol);
   const worth = heldAssets.reduce((sum, asset) => {
     const value = assetWorth(asset, state.books);
     return value >= 0.05 ? sum + value : sum;
@@ -484,25 +481,6 @@ function Shell() {
             );
           })}
         </nav>
-        {held.length > 0 && (
-          <ul className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {held.map((symbol) => (
-              <li key={symbol} className="shrink-0">
-                <button
-                  type="button"
-                  className="flex h-10 items-center gap-2 rounded-full bg-surface pr-3 pl-1 text-sm text-fg"
-                  onClick={() => {
-                    dispatch({ type: "symbol", symbol });
-                    dispatch({ type: "view", view: "desk" });
-                  }}
-                >
-                  <Mark symbol={symbol} />
-                  {symbol}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
       {picker && (
         <ConnectModal
