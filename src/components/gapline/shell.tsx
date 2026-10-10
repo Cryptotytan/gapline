@@ -1,6 +1,6 @@
 import { DeskProvider, useDesk, type ViewId } from "@/lib/gapline/store";
 import { formatUsd } from "@/lib/gapline/model";
-import { invalidateAssets, peekAssets, readAssets, readCash, rememberStocks, sendAsset, shortAddress, silentAccount, watchAccounts, type HeldAsset } from "@/lib/gapline/wallet";
+import { invalidateAssets, peekAssets, readAssets, readCash, refreshCrypto, rememberStocks, sendAsset, shortAddress, silentAccount, watchAccounts, type HeldAsset } from "@/lib/gapline/wallet";
 import { activateSavedWallet, describeSmartWallet, disconnectSmart, finishSmartWalletWithX, resumeSmartWallet, xWalletError } from "@/lib/gapline/smart-wallet";
 import { disconnectLinked, isDismissed, markForName, pinSavedProvider, readActive, readLinked, rememberLinked, setActive, undismissWallet, type LinkedWallet } from "@/lib/gapline/wallet-book";
 import { ConnectModal } from "./connect-modal";
@@ -254,13 +254,37 @@ function Shell() {
     let stop = false;
     readAssets(state.address, (assets) => {
       if (!stop) setHeldAssets(assets);
-    }).catch(() => {
-      if (!stop) setHeldAssets([]);
-    });
+    }).catch(() => undefined);
     return () => {
       stop = true;
     };
   }, [state.address]);
+  useEffect(() => {
+    if (!state.address) return;
+    let stop = false;
+    const tick = () => {
+      refreshCrypto(state.address as string)
+        .then((assets) => {
+          if (!stop && assets?.length) setHeldAssets((current) => {
+            const stocks = current.filter((asset) => asset.side === "stock");
+            const symbols = new Set(assets.map((asset) => asset.symbol));
+            return [...assets, ...stocks.filter((asset) => !symbols.has(asset.symbol))];
+          });
+        })
+        .catch(() => undefined);
+      readCash(state.address as string)
+        .then((cash) => {
+          if (stop || readActive()?.toLowerCase() !== state.address?.toLowerCase()) return;
+          dispatch({ type: "presence", address: state.address as string, cash });
+        })
+        .catch(() => undefined);
+    };
+    const timer = window.setInterval(tick, 12_000);
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+    };
+  }, [dispatch, state.address]);
   const held = heldAssets
     .filter((asset) => asset.side === "stock" && asset.amount >= 0.0001 && assetWorth(asset, state.books) >= 0.5)
     .map((asset) => asset.symbol);

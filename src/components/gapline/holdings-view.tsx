@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useDesk } from "@/lib/gapline/store";
-import { formatUsd, quoteOrder } from "@/lib/gapline/model";
+import { formatUsd } from "@/lib/gapline/model";
 import { Mark, Panel, btnGhost, btnPrimary, field } from "./ui";
 import { peekAssets, readAssets, readCash, sellStock, shortAddress, type HeldAsset } from "@/lib/gapline/wallet";
 import { markForName, openWalletPicker, readLinked } from "@/lib/gapline/wallet-book";
@@ -249,21 +249,40 @@ function StockRow({ asset, onDone }: { asset: HeldAsset; onDone: () => void }) {
   const { state, dispatch } = useDesk();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  const [why, setWhy] = useState("");
+  const [sending, setSending] = useState(false);
   const book = state.books.find((item) => item.symbol === asset.symbol);
   const price = book?.venues.xstocks.price ?? book?.reference ?? 0;
   const value = price * asset.amount;
   const dollars = Number(draft);
-  const qty = price > 0 && dollars > 0 ? Math.min(asset.amount, dollars / price) : 0;
-  const sim = quoteOrder({
-    symbol: asset.symbol,
-    side: "sell",
-    sizeUsd: dollars > 0 ? Math.min(dollars, value || dollars) : 1,
-    venue: "xstocks",
-    cash: state.cash,
-    positions: [{ symbol: asset.symbol, venue: "xstocks", token: `${asset.symbol}x`, qty: asset.amount, costUsd: value }],
-    limits: state.limits,
-    walletReady: true,
-  });
+  const qty = price > 0 ? (dollars > 0 ? Math.min(asset.amount, dollars / price) : 0) : dollars > 0 ? Math.min(asset.amount, dollars) : 0;
+
+  function sell(size: number, all = false) {
+    if (!state.address) return;
+    if (!(size > 0)) {
+      setWhy(price > 0 ? "Type the dollar amount you want to sell." : "Type how many shares you want to sell.");
+      return;
+    }
+    setWhy("");
+    setSending(true);
+    sellStock({ address: state.address, symbol: asset.symbol, qty: size, all })
+      .then(async (sent) => {
+        const cash = await readCash(state.address as string).catch(() => state.cash);
+        dispatch({
+          type: "note",
+          title: "Sold",
+          detail: `${asset.symbol} sold for about ${formatUsd(sent.usdc)} on ${sent.venue}. ${sent.hash}`,
+        });
+        setOpen(false);
+        setDraft("");
+        onDone();
+        return cash;
+      })
+      .catch((error: unknown) => {
+        setWhy(error instanceof Error ? error.message : "The wallet did not send.");
+      })
+      .finally(() => setSending(false));
+  }
 
   return (
     <div>
@@ -271,7 +290,7 @@ function StockRow({ asset, onDone }: { asset: HeldAsset; onDone: () => void }) {
         <AssetLogo asset={asset} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm text-fg">{book?.name ?? asset.name}</span>
-          <span className="block text-xs tabular-nums text-muted">{price > 0 ? formatUsd(price) : "—"}</span>
+          <span className="block text-xs tabular-nums text-muted">{price > 0 ? formatUsd(price) : `${amountLabel(asset.amount)} shares`}</span>
         </span>
         <span className="text-right">
           <span className="block text-sm tabular-nums text-fg">{amountLabel(asset.amount)}</span>
@@ -284,7 +303,8 @@ function StockRow({ asset, onDone }: { asset: HeldAsset; onDone: () => void }) {
             type="button"
             className={btnGhost}
             onClick={() => {
-              setDraft(value > 0 ? String(Math.round(value * 100) / 100) : "");
+              setWhy("");
+              setDraft(value > 0 ? String(Math.round(value * 100) / 100) : String(asset.amount));
               setOpen(true);
             }}
           >
@@ -293,53 +313,31 @@ function StockRow({ asset, onDone }: { asset: HeldAsset; onDone: () => void }) {
         ) : (
           <div className="flex flex-col gap-2">
             <label className="text-sm text-fg">
-              Amount to sell
+              {price > 0 ? "Amount to sell" : "Shares to sell"}
               <span className="mt-2 flex items-center rounded-xl bg-bg px-3">
-                <span className="text-muted">$</span>
+                <span className="text-muted">{price > 0 ? "$" : ""}</span>
                 <input
                   inputMode="decimal"
                   value={draft}
-                  onChange={(event) => setDraft(event.target.value.replace(/[^0-9.]/g, ""))}
+                  onChange={(event) => {
+                    setWhy("");
+                    setDraft(event.target.value.replace(/[^0-9.]/g, ""));
+                  }}
                   className={`${field} border-0 bg-transparent`}
-                  aria-label={`Amount of ${asset.symbol} to sell`}
+                  aria-label={price > 0 ? `Amount of ${asset.symbol} to sell` : `Shares of ${asset.symbol} to sell`}
                 />
               </span>
             </label>
-            <p className="text-xs text-muted">You hold {formatUsd(value)}.</p>
+            <p className="text-xs text-muted">You hold {amountLabel(asset.amount)} shares{value > 0 ? `, about ${formatUsd(value)}` : ""}.</p>
+            {why && <p className="text-sm text-pretty text-down">{why}</p>}
             <div className="flex flex-col gap-2 sm:flex-row">
-              <button
-                type="button"
-                className={btnPrimary}
-                onClick={() => {
-                  if (!state.address) return;
-                  if (!(dollars > 0) || qty <= 0) {
-                    dispatch({ type: "note", title: "Not sent", detail: "Type the amount you want to sell." });
-                    return;
-                  }
-                  if (price > 0 && dollars - value > 0.01) {
-                    dispatch({ type: "note", title: "Not sent", detail: `You hold ${formatUsd(value)}. Nothing was sent.` });
-                    return;
-                  }
-                  sellStock({ address: state.address, symbol: asset.symbol, qty })
-                    .then(async (sent) => {
-                      const cash = await readCash(state.address as string);
-                      if (sim) dispatch({ type: "chain-fill", order: { ...sim, qty, venue: "xstocks" }, cash, hash: sent.hash });
-                      dispatch({ type: "note", title: "Sent", detail: sent.hash });
-                      setOpen(false);
-                      onDone();
-                    })
-                    .catch((error: unknown) =>
-                      dispatch({
-                        type: "note",
-                        title: "Not sent",
-                        detail: error instanceof Error ? error.message : "The wallet did not send.",
-                      }),
-                    );
-                }}
-              >
-                Sell {asset.symbol}
+              <button type="button" className={btnPrimary} disabled={sending} onClick={() => sell(qty)}>
+                {sending ? "Waiting for wallet" : `Sell ${asset.symbol}`}
               </button>
-              <button type="button" className={btnGhost} onClick={() => setOpen(false)}>
+              <button type="button" className={btnGhost} disabled={sending} onClick={() => sell(asset.amount, true)}>
+                Sell all
+              </button>
+              <button type="button" className={btnGhost} disabled={sending} onClick={() => setOpen(false)}>
                 Keep it
               </button>
             </div>
