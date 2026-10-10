@@ -149,7 +149,17 @@ export async function signIn(
     errorCallbackURL,
   });
   if (error) throw new Error(error.message ?? "Sign-in failed");
-  if (data?.url) window.location.href = data.url;
+  if (data?.url) {
+    try {
+      if (window.top && window.top !== window.self) {
+        window.top.location.href = data.url;
+        return;
+      }
+    } catch {
+      /* A cross-origin frame can still navigate itself. */
+    }
+    window.location.href = data.url;
+  }
 }
 
 /**

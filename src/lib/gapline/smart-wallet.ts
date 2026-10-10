@@ -9,6 +9,7 @@ const PUBLIC = "gapline.smart.public";
 const LEGACY = "gapline.smart.v1";
 const ACTIVE = "gapline.smart.active";
 const PENDING = "gapline.smart.pending";
+const SEAL = "gapline.xvault";
 const RPC = "https://bsc-dataseed.binance.org";
 
 type PublicRow = { kind: "x" | "email"; name: string; address: Address };
@@ -39,6 +40,18 @@ function pendingX() {
 function clearPending() {
   sessionStorage.removeItem(PENDING);
   localStorage.removeItem(PENDING);
+}
+
+function readSeal() {
+  try {
+    return localStorage.getItem(SEAL);
+  } catch {
+    return null;
+  }
+}
+
+function writeSeal(seal: string) {
+  localStorage.setItem(SEAL, seal);
 }
 
 async function waitForXSession(tries = 10) {
@@ -97,10 +110,11 @@ export function disconnectSmart() {
 
 export const unlockXWallet = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .handler(async ({ context }) => {
+  .validator((seal: string | null) => (typeof seal === "string" ? seal : null))
+  .handler(async ({ data, context }) => {
     if (!context.userId || context.userId === "dev-user") return { ok: false as const, error: "Sign in with X first." };
     const { openVault } = await import("./wallet-vault.server");
-    return openVault(context.userId);
+    return openVault(context.userId, data);
   });
 
 export const importLegacyKey = createServerFn({ method: "POST" })
@@ -132,10 +146,16 @@ export async function migrateLegacyKeys() {
   localStorage.removeItem(LEGACY);
 }
 
+async function unlockSaved() {
+  const result = await unlockXWallet({ data: readSeal() });
+  if (result.ok && result.seal) writeSeal(result.seal);
+  return result;
+}
+
 export async function resumeSmartWallet() {
   await migrateLegacyKeys();
   try {
-    const result = await unlockXWallet();
+    const result = await unlockSaved();
     if (!result.ok) return null;
     return hold(result.key, "x", "X wallet");
   } catch {
@@ -147,7 +167,7 @@ export async function activateSavedWallet(address: string) {
   if (account && account.address.toLowerCase() === address.toLowerCase()) return true;
   const known = readPublic().find((row) => row.address.toLowerCase() === address.toLowerCase());
   if (known?.kind === "x") {
-    const result = await unlockXWallet().catch(() => null);
+    const result = await unlockSaved().catch(() => null);
     if (result?.ok && result.address.toLowerCase() === address.toLowerCase()) {
       hold(result.key, "x", "X wallet");
       return true;
@@ -240,11 +260,16 @@ export async function createSmartWalletWithX() {
   const page = window.location.pathname;
   const back = new URL(page === "/" || page === "/desk" ? "/today" : page, window.location.origin);
   back.searchParams.set("x", "1");
+  const preview = window.location.hostname.endsWith(".grok-sandbox.com");
   try {
-    await signIn("grok-x", { callbackURL: `${back.pathname}${back.search}`, errorCallbackURL: "/today?x=1" });
+    await signIn("grok-x", { callbackURL: `${back.pathname}${back.search}`, errorCallbackURL: "/today" });
   } catch (error) {
     clearPending();
     throw new Error(explainX(error));
+  }
+  if (!preview) {
+    await new Promise((resolve) => window.setTimeout(resolve, 15000));
+    throw new Error("X did not open. Allow this page to continue to X, then come back here.");
   }
   const address = await finishSmartWalletWithX();
   if (!address) throw new Error(lastXError || "X did not finish signing in. Nothing was created.");
@@ -260,10 +285,10 @@ export async function finishSmartWalletWithX() {
     if (!xReturn()) clearPending();
     return null;
   }
-  let result = await unlockXWallet().catch((error: unknown) => ({ ok: false as const, error: explainX(error) }));
+  let result = await unlockSaved().catch((error: unknown) => ({ ok: false as const, error: explainX(error) }));
   if (!result?.ok) {
     await new Promise((resolve) => window.setTimeout(resolve, 700));
-    result = await unlockXWallet().catch((error: unknown) => ({ ok: false as const, error: explainX(error) }));
+    result = await unlockSaved().catch((error: unknown) => ({ ok: false as const, error: explainX(error) }));
   }
   if (!result?.ok) {
     lastXError = "error" in result && result.error ? result.error : "The X wallet could not be opened.";

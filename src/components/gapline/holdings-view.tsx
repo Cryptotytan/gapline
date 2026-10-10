@@ -53,14 +53,7 @@ export function HoldingsView() {
   }
   const byValue = (left: HeldAsset, right: HeldAsset) => valueOf(right) - valueOf(left);
   const crypto = assets.filter((asset) => asset.side === "crypto").sort(byValue);
-  const stocks = assets
-    .filter((asset) => {
-      if (asset.side !== "stock" || asset.amount <= 0.000001) return false;
-      const book = state.books.find((item) => item.symbol === asset.symbol);
-      const price = book?.venues.xstocks.price ?? book?.reference ?? 0;
-      return asset.amount >= 0.0001 && price > 0 && price * asset.amount >= 0.5;
-    })
-    .sort(byValue);
+  const stocks = assets.filter((asset) => asset.side === "stock" && asset.amount > 0.00000001).sort(byValue);
   const showing = side === "crypto" ? crypto : stocks;
 
   function remember(next: HeldAsset[], nextSide = side) {
@@ -89,6 +82,19 @@ export function HoldingsView() {
     return () => {
       stop = true;
     };
+  }, [state.address]);
+
+  useEffect(() => {
+    if (!state.address) return;
+    const refresh = () => {
+      readAssets(state.address as string, (next) => {
+        setAssets(next);
+        setLoading(false);
+        walletCache = { address: state.address as string, assets: next, side: walletCache?.side ?? "crypto" };
+      }, true).catch(() => undefined);
+    };
+    window.addEventListener("gapline:stocks", refresh);
+    return () => window.removeEventListener("gapline:stocks", refresh);
   }, [state.address]);
 
   const linked = state.address ? readLinked().find((wallet) => wallet.address.toLowerCase() === state.address?.toLowerCase()) : null;

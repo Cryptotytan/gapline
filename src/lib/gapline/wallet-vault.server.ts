@@ -1,31 +1,27 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { PREVIEW_CLIENT_SECRET } from "@/lib/auth/preview";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { getSql } from "@/lib/db";
 
 type Row = { id: string; address: `0x${string}`; keyCipher: string };
-type Opened = { ok: true; address: `0x${string}`; key: `0x${string}` } | { ok: false; error: string };
+type Opened = { ok: true; address: `0x${string}`; key: `0x${string}`; seal: string } | { ok: false; error: string };
 
 const COOKIE = "__Host-gapline.xwallet";
 
+function passkeys() {
+  const env =
+    process.env.GAPLINE_WALLET_SECRET?.trim() ||
+    process.env.BETTER_AUTH_SECRET?.trim() ||
+    process.env.GROK_AUTH_CLIENT_SECRET?.trim();
+  const keys: Buffer[] = [];
+  if (env) keys.push(createHash("sha256").update(env).digest());
+  keys.push(createHash("sha256").update(`gapline-vault:${PREVIEW_CLIENT_SECRET}`).digest());
+  return keys;
+}
+
 function secret() {
-  const env = process.env.GAPLINE_WALLET_SECRET?.trim() || process.env.BETTER_AUTH_SECRET?.trim();
-  if (env) return createHash("sha256").update(env).digest();
-  const path = `${process.cwd()}/.secrets/wallet-secret`;
-  try {
-    const file = readFileSync(path, "utf8").trim();
-    if (file) return createHash("sha256").update(file).digest();
-  } catch {
-    /* Created below when this server can keep a file. */
-  }
-  const created = randomBytes(32).toString("hex");
-  try {
-    mkdirSync(`${process.cwd()}/.secrets`, { recursive: true });
-    writeFileSync(path, created, { mode: 0o600 });
-    return createHash("sha256").update(created).digest();
-  } catch {
-    return null;
-  }
+  return passkeys()[0] ?? null;
 }
 
 function encrypt(key: string) {
@@ -38,13 +34,19 @@ function encrypt(key: string) {
 }
 
 function decrypt(payload: string) {
-  const pass = secret();
-  if (!pass) throw new Error("Wallet storage is not configured.");
   const [iv, tag, body] = payload.split(".");
   if (!iv || !tag || !body) throw new Error("The saved wallet could not be opened.");
-  const decipher = createDecipheriv("aes-256-gcm", pass, Buffer.from(iv, "base64"));
-  decipher.setAuthTag(Buffer.from(tag, "base64"));
-  return Buffer.concat([decipher.update(Buffer.from(body, "base64")), decipher.final()]).toString("utf8") as `0x${string}`;
+  let last = "The saved X wallet could not be opened.";
+  for (const pass of passkeys()) {
+    try {
+      const decipher = createDecipheriv("aes-256-gcm", pass, Buffer.from(iv, "base64"));
+      decipher.setAuthTag(Buffer.from(tag, "base64"));
+      return Buffer.concat([decipher.update(Buffer.from(body, "base64")), decipher.final()]).toString("utf8") as `0x${string}`;
+    } catch (error) {
+      last = error instanceof Error ? error.message : last;
+    }
+  }
+  throw new Error(last);
 }
 
 function vaultPath() {
@@ -67,6 +69,27 @@ function writeRows(rows: Row[]) {
 
 function accountId(id: string) {
   return id.startsWith("x:") ? id : `x:${id}`;
+}
+
+function sealFor(row: Row) {
+  return `${encodeURIComponent(row.id)}~${row.keyCipher}`;
+}
+
+function rowFromSeal(id: string, seal: string | null | undefined): Row | null {
+  if (!seal) return null;
+  const split = seal.indexOf("~");
+  if (split <= 0) return null;
+  const owner = decodeURIComponent(seal.slice(0, split));
+  const keyId = accountId(id);
+  if (owner !== keyId && owner !== id) return null;
+  const keyCipher = seal.slice(split + 1);
+  if (!keyCipher.includes(".")) return null;
+  try {
+    const key = decrypt(keyCipher);
+    return { id: keyId, address: privateKeyToAccount(key).address, keyCipher };
+  } catch {
+    return null;
+  }
 }
 
 async function readDb(id: string): Promise<Row | null> {
@@ -147,28 +170,39 @@ async function remember(row: Row) {
   return saved;
 }
 
-export async function openVault(id: string): Promise<Opened> {
+async function firstOpenable(rows: Array<Row | null>): Promise<Row | null> {
+  for (const row of rows) {
+    if (!row) continue;
+    try {
+      const key = decrypt(row.keyCipher);
+      if (privateKeyToAccount(key).address.toLowerCase() === row.address.toLowerCase()) return row;
+    } catch {
+      /* Try the next copy. A stale file must not block a saved seal. */
+    }
+  }
+  return null;
+}
+
+export async function openVault(id: string, clientSeal?: string | null): Promise<Opened> {
   const keyId = accountId(id);
   if (!secret()) return { ok: false, error: "Wallet storage is not configured." };
-  const existing = (await readDb(keyId)) ?? (await readCookie(keyId)) ?? readFileRow(keyId);
+  const existing = await firstOpenable([
+    await readDb(keyId),
+    await readCookie(keyId),
+    readFileRow(keyId),
+    rowFromSeal(id, clientSeal),
+  ]);
   if (existing) {
-    try {
-      const key = decrypt(existing.keyCipher);
-      if (privateKeyToAccount(key).address.toLowerCase() !== existing.address.toLowerCase()) {
-        return { ok: false, error: "The saved X wallet could not be opened." };
-      }
-      await remember({ ...existing, id: keyId });
-      return { ok: true, address: existing.address, key };
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : "The saved X wallet could not be opened." };
-    }
+    const key = decrypt(existing.keyCipher);
+    const row = { ...existing, id: keyId };
+    await remember(row);
+    return { ok: true, address: existing.address, key, seal: sealFor(row) };
   }
   const key = generatePrivateKey();
   const address = privateKeyToAccount(key).address;
   const row = { id: keyId, address, keyCipher: encrypt(key) };
-  const saved = await remember(row);
-  if (!saved.length) return { ok: false, error: "The X wallet could not be saved. Try again." };
-  return { ok: true, address, key };
+  await remember(row);
+  return { ok: true, address, key, seal: sealFor(row) };
 }
 
 export function sealKey(key: string) {

@@ -17,6 +17,7 @@ export function ConnectModal({
   onConnected: (address: string, cash: number, created?: boolean) => void;
   onError: (message: string) => void;
 }) {
+  const [busy, setBusy] = useState(false);
   const [icons, setIcons] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -83,18 +84,25 @@ export function ConnectModal({
             <p className="mt-2 text-sm text-pretty text-muted">The address stays with this X login.</p>
             <button
               type="button"
-              className="mt-4 flex h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-full bg-primary text-sm font-medium text-primary-fg hover:bg-primary/90 active:scale-[0.98]"
+              disabled={busy}
+              className="mt-4 flex h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-full bg-primary text-sm font-medium text-primary-fg hover:bg-primary/90 active:scale-[0.98] disabled:cursor-wait disabled:opacity-70"
               onClick={() => {
+                if (busy) return;
+                setBusy(true);
                 createSmartWalletWithX()
                   .then((address) => {
+                    if (!address) return;
                     rememberLinked({ address, name: "X wallet", kind: "x" });
-                    return readCash(address).catch(() => 0).then((cash) => onConnected(address, cash));
+                    return readCash(address).catch(() => 0).then((cash) => onConnected(address, cash, true));
                   })
-                  .catch((error: unknown) => onError(error instanceof Error ? error.message : "X did not sign in."));
+                  .catch((error: unknown) => {
+                    setBusy(false);
+                    onError(error instanceof Error ? error.message : "X did not sign in.");
+                  });
               }}
             >
               <XLogo className="size-3.5" />
-              Continue with X
+              {busy ? "Opening X" : "Continue with X"}
             </button>
           </section>
         </div>

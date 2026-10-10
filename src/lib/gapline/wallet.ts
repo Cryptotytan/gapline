@@ -1,3 +1,4 @@
+import { encodeFunctionData, decodeFunctionResult, type Address, type Hex } from "viem";
 import { smartActive, smartAddress, smartProvider, disconnectSmart, transferFromSmart } from "./smart-wallet";
 
 const BSC = "0x38";
@@ -580,38 +581,72 @@ const STOCKS: { symbol: string; name: string; address: string; logo: string }[] 
 const MULTICALL = "0xcA11bde05977b3631167028862bE2a173976CA11";
 const RPCS = ["https://bsc-dataseed.binance.org", "https://bsc.publicnode.com", "https://bsc-dataseed1.defibit.io", "https://1rpc.io/bnb"];
 
-function word(value: bigint | number) {
-  return BigInt(value).toString(16).padStart(64, "0");
-}
+const balanceAbi = [
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
+
+const tryAggregateAbi = [
+  {
+    type: "function",
+    name: "tryAggregate",
+    stateMutability: "payable",
+    inputs: [
+      { name: "requireSuccess", type: "bool" },
+      {
+        name: "calls",
+        type: "tuple[]",
+        components: [
+          { name: "target", type: "address" },
+          { name: "callData", type: "bytes" },
+        ],
+      },
+    ],
+    outputs: [
+      {
+        name: "returnData",
+        type: "tuple[]",
+        components: [
+          { name: "success", type: "bool" },
+          { name: "returnData", type: "bytes" },
+        ],
+      },
+    ],
+  },
+] as const;
 
 function encodeBalances(tokens: string[], owner: string) {
-  const tuples = tokens.map((token) => {
-    const call = (`70a08231${pad(owner)}`).padEnd(96, "0");
-    return `${pad(token)}${word(64)}${word(36)}${call}`;
+  return encodeFunctionData({
+    abi: tryAggregateAbi,
+    functionName: "tryAggregate",
+    args: [
+      false,
+      tokens.map((token) => ({
+        target: token as Address,
+        callData: encodeFunctionData({ abi: balanceAbi, functionName: "balanceOf", args: [owner as Address] }),
+      })),
+    ],
   });
-  let head = word(tokens.length);
-  let body = "";
-  let cursor = tokens.length * 32;
-  for (const tuple of tuples) {
-    head += word(cursor);
-    body += tuple;
-    cursor += tuple.length / 2;
-  }
-  return `0xbce38bd7${word(0)}${word(64)}${head}${body}`;
 }
 
 function decodeBalances(result: string, count: number) {
-  const words = result.slice(2).match(/.{64}/g) ?? [];
-  const balances = Array.from({ length: count }, () => 0n);
-  if (words.length < count + 4) return balances;
-  for (let index = 0; index < count; index += 1) {
-    const offset = Number(BigInt(`0x${words[2 + index]}`));
-    const start = 2 + offset / 32;
-    if (!words[start] || BigInt(`0x${words[start]}`) !== 1n) continue;
-    const lenIndex = start + Number(BigInt(`0x${words[start + 1]}`)) / 32;
-    if (words[lenIndex + 1]) balances[index] = BigInt(`0x${words[lenIndex + 1]}`);
+  const empty = Array.from({ length: count }, () => 0n);
+  if (!result || result === "0x" || result.length < 10) return empty;
+  try {
+    const rows = decodeFunctionResult({ abi: tryAggregateAbi, functionName: "tryAggregate", data: result as Hex });
+    return empty.map((_, index) => {
+      const row = rows[index];
+      if (!row?.success || !row.returnData || row.returnData === "0x") return 0n;
+      return BigInt(row.returnData);
+    });
+  } catch {
+    return empty;
   }
-  return balances;
 }
 
 async function rpcCall(to: string, data: string) {
@@ -675,6 +710,16 @@ function storeAssets(key: string, assets: HeldAsset[], done = true) {
   }
 }
 
+export function invalidateAssets(address?: string) {
+  if (!address) {
+    for (const [key, row] of assetCache) assetCache.set(key, { ...row, at: 0 });
+    return;
+  }
+  const key = address.toLowerCase();
+  const row = assetCache.get(key);
+  if (row) assetCache.set(key, { ...row, at: 0 });
+}
+
 export function peekAssets(address: string) {
   savedAssets();
   return assetCache.get(address.toLowerCase())?.assets ?? null;
@@ -713,10 +758,18 @@ function pushHeld(held: HeldAsset[], asset: HeldAsset) {
 
 async function loadAssets(address: string) {
   const key = address.toLowerCase();
-  const stocks = Object.entries({ ...XSTOCK, ...EXTRA }).map(([symbol, token]) => {
-    const known = STOCKS.find((item) => item.symbol === symbol);
-    return { symbol, name: known?.name ?? symbol, address: token, logo: known?.logo, usd: undefined as "stable" | undefined, stock: true };
-  });
+  const seen = new Set<string>();
+  const stocks = Object.entries({ ...XSTOCK, ...EXTRA })
+    .map(([symbol, token]) => {
+      const known = STOCKS.find((item) => item.symbol === symbol);
+      return { symbol, name: known?.name ?? symbol, address: token, logo: known?.logo };
+    })
+    .filter((token) => {
+      const id = token.address.toLowerCase();
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
   const stables = WATCH.map((token) => ({ ...token, stock: false }));
   const held: HeldAsset[] = [];
   const bnbPromise = bnbUsd();
@@ -741,7 +794,7 @@ async function loadAssets(address: string) {
     storeAssets(key, held.slice(), false);
   }
   const chunks: (typeof stocks)[] = [];
-  for (let index = 0; index < stocks.length; index += 80) chunks.push(stocks.slice(index, index + 80));
+  for (let index = 0; index < stocks.length; index += 40) chunks.push(stocks.slice(index, index + 40));
   const parts = await Promise.all(chunks.map((chunk) => rpcCall(MULTICALL, encodeBalances(chunk.map((token) => token.address), address)).catch(() => "0x")));
   chunks.forEach((chunk, chunkIndex) => {
     const balances = decodeBalances(parts[chunkIndex] ?? "0x", chunk.length);
@@ -755,7 +808,7 @@ async function loadAssets(address: string) {
   return held;
 }
 
-export async function readAssets(address: string, onPartial?: (assets: HeldAsset[]) => void, fresh = false) {
+export async function readAssets(address: string, onPartial?: (assets: HeldAsset[]) => void, fresh = false): Promise<HeldAsset[]> {
   const key = address.toLowerCase();
   savedAssets();
   const hit = assetCache.get(key);
@@ -767,7 +820,10 @@ export async function readAssets(address: string, onPartial?: (assets: HeldAsset
     assetListeners.set(key, set);
   }
   const pending = assetFlight.get(key);
-  if (pending) return pending;
+  if (pending && !fresh) return pending;
+  if (pending && fresh) {
+    return pending.catch(() => [] as HeldAsset[]).then(() => readAssets(address, onPartial, false));
+  }
   const job = loadAssets(address).finally(() => {
     assetFlight.delete(key);
     assetListeners.delete(key);

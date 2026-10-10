@@ -1,6 +1,6 @@
 import { DeskProvider, useDesk, type ViewId } from "@/lib/gapline/store";
 import { formatUsd } from "@/lib/gapline/model";
-import { peekAssets, readAssets, readCash, rememberStocks, sendAsset, shortAddress, silentAccount, watchAccounts, type HeldAsset } from "@/lib/gapline/wallet";
+import { invalidateAssets, peekAssets, readAssets, readCash, rememberStocks, sendAsset, shortAddress, silentAccount, watchAccounts, type HeldAsset } from "@/lib/gapline/wallet";
 import { activateSavedWallet, describeSmartWallet, disconnectSmart, finishSmartWalletWithX, resumeSmartWallet, xWalletError } from "@/lib/gapline/smart-wallet";
 import { disconnectLinked, isDismissed, markForName, pinSavedProvider, readActive, readLinked, rememberLinked, setActive, undismissWallet, type LinkedWallet } from "@/lib/gapline/wallet-book";
 import { ConnectModal } from "./connect-modal";
@@ -80,7 +80,11 @@ function Shell() {
           const priced = cash.ok ? applyCashPrints(kept, cash.rows) : kept;
           const merged = catalog.ok ? appendCatalog(priced, catalog.rows) : { books: priced, marks: {} };
           const books = snapshot.ok ? applyLiveSnapshot(merged.books, snapshot.rows, snapshot.btcMoveBps) : merged.books;
-          if (catalog.ok) rememberStocks(catalog.rows);
+          if (catalog.ok) {
+            rememberStocks(catalog.rows);
+            invalidateAssets();
+            window.dispatchEvent(new Event("gapline:stocks"));
+          }
           const session = result.ok ? tapeSession(result.tokens) : { ok: false as const, detail: "The price feed did not answer." };
           const live = snapshot.ok
             ? { ok: true as const, open: session.ok ? session.open : false, nextAt: session.ok ? session.nextAt : null, clock: false, detail: snapshot.detail }
@@ -126,6 +130,7 @@ function Shell() {
   const viewRef = useRef(state.view);
   viewRef.current = state.view;
   useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("x") === "1") return;
     const next = pathForView(state.view);
     if (!next || next === window.location.pathname) return;
     void Promise.resolve(navigate({ to: next })).catch(() => {
@@ -159,9 +164,10 @@ function Shell() {
         if (stop) return;
         created = await finishSmartWalletWithX();
       }
+      if (created) undismissWallet(created);
       const chosen = created ?? (fromX ? null : readActive());
-      if (!chosen || isDismissed(chosen)) {
-        disconnectSmart();
+      if (!chosen || (isDismissed(chosen) && !created)) {
+        if (!created) disconnectSmart();
         if (fromX) {
           dispatch({
             type: "note",
@@ -176,7 +182,7 @@ function Shell() {
       const kind = described?.kind ?? linkedRow?.kind;
       if (kind === "x" || created) {
         const address = created ?? (await resumeSmartWallet());
-        if (stop || !address || address.toLowerCase() !== chosen.toLowerCase() || isDismissed(address)) {
+        if (stop || !address || address.toLowerCase() !== chosen.toLowerCase()) {
           if (!created) disconnectSmart();
           if (fromX || created) {
             dispatch({
