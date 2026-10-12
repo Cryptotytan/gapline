@@ -1,5 +1,5 @@
 import { useDesk } from "@/lib/gapline/store";
-import { VENUES, advise, classify, formatQty, formatUsd, listRoutes, quoteOrder, type VenueId } from "@/lib/gapline/model";
+import { VENUES, advise, classify, formatQty, formatUsd, listRoutes, quoteOrder, stockPrice, type VenueId } from "@/lib/gapline/model";
 import { CallBadge, Mark, Panel, btnPrimary, field } from "./ui";
 import { GapChart } from "./desk";
 import { cardCheckout } from "./card-pay";
@@ -171,6 +171,7 @@ export function RouteView() {
                       <span className="block truncate text-sm text-fg">{item.name}</span>
                       <span className="block text-xs text-muted">{item.symbol}</span>
                     </span>
+                    <span className="text-sm tabular-nums text-fg">{stockPrice(item) > 0 ? formatUsd(stockPrice(item)) : "…"}</span>
                   </button>
                 </li>
               ))}
@@ -222,7 +223,7 @@ export function RouteView() {
         </div>
       </Panel>
       <Panel>
-        <div className="px-5 pt-5 pb-2">
+        <div className="px-3 pt-4 pb-2 sm:px-5 sm:pt-5">
           <p className="text-[11px] tracking-[0.16em] text-primary uppercase">Route</p>
           <div className="mt-1 flex items-center justify-between gap-3">
             <h3 className="font-display text-2xl text-fg">Where this buy goes</h3>
@@ -260,7 +261,7 @@ export function RouteView() {
                 <p className="text-[11px] tracking-[0.16em] text-primary uppercase">Review</p>
                 <p className="truncate font-display text-2xl text-fg">{b.name}</p>
               </div>
-              <p className="font-display text-2xl tabular-nums text-fg">{formatUsd(quoteSize)}</p>
+              <p className="shrink-0 font-display text-xl tabular-nums text-fg sm:text-2xl">{formatUsd(quoteSize)}</p>
             </div>
             <dl className="mt-4 grid grid-cols-2 gap-2">
               {[

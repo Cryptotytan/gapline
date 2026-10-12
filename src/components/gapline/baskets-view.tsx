@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useDesk } from "@/lib/gapline/store";
-import { BASKETS, book, buyPlanFor, classify, driftFor, formatUsd, planQuotes, rebalanceFor, weightsFor, type BasketId } from "@/lib/gapline/model";
+import { BASKETS, book, buyPlanFor, classify, driftFor, formatUsd, planQuotes, rebalanceFor, stockPrice, weightsFor, type BasketId } from "@/lib/gapline/model";
 import { buyStock, readCash, stockToken } from "@/lib/gapline/wallet";
 import { openWalletPicker, pinSavedProvider } from "@/lib/gapline/wallet-book";
 import { activateSavedWallet } from "@/lib/gapline/smart-wallet";
@@ -265,7 +265,7 @@ export function BasketsView() {
                     >
                       <Mark symbol={item.symbol} name={item.name} round />
                       <span className="min-w-0 flex-1 truncate text-sm text-fg">{item.name}</span>
-                      <span className="text-xs text-muted">{item.symbol}</span>
+                      <span className="text-xs tabular-nums text-fg">{stockPrice(item) > 0 ? formatUsd(stockPrice(item)) : "…"}</span>
                     </button>
                   </li>
                 ))}
@@ -326,7 +326,9 @@ export function BasketsView() {
                   <Mark symbol={row.symbol} name={item?.name} round />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-fg">{item?.name ?? row.symbol}</p>
-                    <p className="text-xs text-muted">{row.symbol} · {share}%</p>
+                    <p className="text-xs text-muted">
+                      {row.symbol} · {item && stockPrice(item) > 0 ? formatUsd(stockPrice(item)) : "…"} · {share}%
+                    </p>
                   </div>
                   <p className="text-sm font-medium tabular-nums text-fg">{held < 1 ? (basketBudget > 0 ? formatUsd(leg) : "") : formatUsd(row.value)}</p>
                 </div>

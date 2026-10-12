@@ -20,6 +20,7 @@ export type Book = {
   address?: string;
   logo?: string;
   tape?: { label: string; bps: number }[];
+  dayBps?: number | null;
   venues: Record<VenueId, VenueBook>;
 };
 
@@ -321,19 +322,49 @@ function row(
 
 export const BOOKS: Book[] = [
   row("NVDA", "NVIDIA", ["mag7", "ai"], 178.4, "High beta to the weekend crypto bid. Gap is about what that bid explains.", [180.12, 1_400_000], [180.88, 860_000], [179.64, 510_000]),
-  row("AAPL", "Apple", ["mag7", "buffett"], 248.2, "Tight to the Friday close on all three venues.", [248.48, 2_200_000], [249.3, 1_500_000], [248.7, 640_000]),
+  row("AAPL", "Apple", ["mag7", "buffett"], 248.2, "The latest print is tight across the three venues.", [248.48, 2_200_000], [249.3, 1_500_000], [248.7, 640_000]),
   row("MSFT", "Microsoft", ["mag7"], 508, "A few cents under the cash close. Inside the noise band.", [506.1, 980_000], [507.4, 640_000], [506.55, 300_000]),
-  row("AMZN", "Amazon", ["mag7", "buffett"], 228.5, "About 0.9% under the frozen reference while BTC is up. A discount the weekend bid does not explain away, but not a blow-off.", [226.44, 760_000], [227.2, 420_000], [226.7, 250_000]),
+  row("AMZN", "Amazon", ["mag7", "buffett"], 228.5, "The latest print is a little under the last session while BTC is up.", [226.44, 760_000], [227.2, 420_000], [226.7, 250_000]),
   row("META", "Meta", ["mag7"], 712, "A modest premium, in line with the weekend risk bid.", [718.4, 540_000], [720.1, 310_000], [717.2, 180_000]),
-  row("GOOGL", "Alphabet", ["mag7", "buffett"], 196.4, "Flat versus Friday. Nothing to do.", [196.15, 890_000], [196.95, 510_000], [196.4, 240_000]),
+  row("GOOGL", "Alphabet", ["mag7", "buffett"], 196.4, "Flat over the last day. Nothing to do.", [196.15, 890_000], [196.95, 510_000], [196.4, 240_000]),
   row("TSLA", "Tesla", ["mag7"], 412, "The premium is several times the crypto move. Treat it as news, not a peg.", [431.6, 870_000], [433.2, 240_000], [428.9, 190_000]),
   row("AVGO", "Broadcom", ["ai"], 338.5, "Chip complex is bid with the tape. Depth is usable.", [343.1, 410_000], [344.4, 220_000], [342.2, 140_000]),
   row("TSM", "TSMC", ["ai"], 212.8, "Same chip bid, smaller book than NVIDIA.", [215.9, 380_000], [216.7, 160_000], [214.95, 120_000]),
   row("AMD", "AMD", ["ai"], 164.3, "Premium is wider than NVDA, and the xStocks book is thin.", [167.8, 120_000], [168.5, 70_000], [166.9, 55_000]),
   row("MU", "Micron", ["ai"], 146.2, "The gap looks large because almost nobody is quoting it.", [155.1, 46_000], [156, 22_000], [153.4, 31_000]),
   row("CRCL", "Circle", [], 182.5, "A listed name with a clean reference and a medium book.", [186.2, 300_000], [186.9, 140_000], [185.4, 90_000]),
-  row("SPCX", "SpaceX", [], null, "No cash close to freeze. Do not score this as a weekend gap.", [214, 150_000], [216, 80_000], [212, 60_000]),
+  row("SPCX", "SpaceX", [], null, "No cash session. The number on screen is the latest token print.", [214, 150_000], [216, 80_000], [212, 60_000]),
+  row("NFLX", "Netflix", ["consumer"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("JPM", "JPMorgan", ["banks"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("BAC", "Bank of America", ["banks"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("GS", "Goldman Sachs", ["banks"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("V", "Visa", ["consumer"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("MA", "Mastercard", ["consumer"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("WMT", "Walmart", ["consumer"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("COST", "Costco", ["consumer"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("KO", "Coca-Cola", ["consumer", "buffett"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("PEP", "PepsiCo", ["consumer"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("DIS", "Disney", ["consumer"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("NKE", "Nike", ["consumer"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("MCD", "McDonald's", ["consumer", "buffett"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("SBUX", "Starbucks", ["consumer"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("HD", "Home Depot", ["consumer"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("XOM", "Exxon Mobil", ["energy"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("CVX", "Chevron", ["energy"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("BA", "Boeing", [], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("CAT", "Caterpillar", [], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("ORCL", "Oracle", ["software"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("CRM", "Salesforce", ["software"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("INTC", "Intel", ["ai"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("QCOM", "Qualcomm", ["ai"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("IBM", "IBM", ["software"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("COIN", "Coinbase", [], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("PLTR", "Palantir", ["ai", "software"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("ADBE", "Adobe", ["software"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
+  row("UBER", "Uber", ["consumer"], null, "A major name. The price is the latest print.", [0, 500_000], [0, 250_000], [0, 250_000]),
 ];
+
+export const MAJOR_SYMBOLS = new Set(BOOKS.map((book) => book.symbol));
 
 export const DEFAULT_LIMITS: Limits = { maxSizeUsd: 25 };
 export const PAPER_CASH = 500;
@@ -442,57 +473,56 @@ export function gapBps(price: number, reference: number): number {
   return ((price - reference) / reference) * 10000;
 }
 
+export function stockPrice(b: Book): number {
+  return b.venues.xstocks.price || b.venues.bstocks.price || b.venues.ondo.price || 0;
+}
+
+export function shownMove(b: Book): number | null {
+  if (b.dayBps == null || !Number.isFinite(b.dayBps)) return null;
+  return b.dayBps;
+}
+
 export function gapOf(b: Book): number | null {
-  if (b.reference == null) return null;
-  const price = b.live && b.venues.xstocks.price > 0 ? b.venues.xstocks.price : b.venues.bstocks.price;
-  if (price <= 0) return null;
-  return gapBps(price, b.reference);
+  return shownMove(b);
 }
 
 export function classify(b: Book, btcMoveBps = btcMove()): Call {
-  if (b.reference == null) {
-    return {
-      id: "unscored",
-      label: "No Friday price",
-      detail: "There is no Friday closing price for this name, so it is not compared to the stock market.",
-    };
-  }
-  const gap = gapOf(b) ?? 0;
+  const move = shownMove(b);
   const liq = b.live ? b.venues.xstocks.liquidityUsd : b.venues.bstocks.liquidityUsd;
-  if (b.live && Math.abs(gap) > 800) {
-    return {
-      id: "thin",
-      label: "Skip",
-      detail: "The on-chain mark is far from the stock. That is not a price to buy.",
-    };
-  }
   if (!b.live && liq < 80_000) {
     return {
       id: "thin",
       label: "Skip",
-      detail: "The price jumped, but almost nobody is trading it. A small buy would move the price more than the gap.",
+      detail: "The price jumped, but almost nobody is trading it. A small buy would move the price more than the change.",
     };
   }
-  if (Math.abs(gap) < 40) {
+  if (move == null) {
+    return {
+      id: "noise",
+      label: "Live",
+      detail: "This is the latest print. The 24 hour change is still loading.",
+    };
+  }
+  if (Math.abs(move) < 40) {
     return {
       id: "noise",
       label: "Quiet",
-      detail: "This is close to Friday's close. Fees would cost more than the difference.",
+      detail: "The last 24 hours barely moved this price. Fees would cost more than the difference.",
     };
   }
   const expected = btcMoveBps * 0.35;
-  const residual = gap - expected;
+  const residual = move - expected;
   if (Math.abs(residual) > 180) {
     return {
       id: "news",
       label: "Unusual",
-      detail: "This move is bigger than the weekend crypto rally explains. It may not come back on Monday.",
+      detail: "This 24 hour move is larger than Bitcoin explains.",
     };
   }
   return {
     id: "revert",
     label: "May settle",
-    detail: "This move looks like the weekend crypto rally. The official stock price is frozen until Monday morning.",
+    detail: "This 24 hour move is in line with Bitcoin. The price on screen is the latest print.",
   };
 }
 
@@ -575,27 +605,21 @@ export function advise(b: Book, sizeUsd: number): Advice {
   const carryBps = ondo && share ? gapBps(ondo.price, share.price) : null;
   const carryNotArb = carryBps != null && carryBps > 0 && carryBps < 120;
   const call = classify(b);
-  const gap = gapOf(b);
-  const move = formatMove(gap);
+  const moveBps = shownMove(b);
+  const move = moveBps == null ? null : formatMove(moveBps);
+  const changed = move ? `${b.name} is ${move} over the last 24 hours` : `${b.name} is on the latest print`;
   let decision: Decision = "leave";
   let pick = fair.venue;
-  let note = `${b.name} is ${move} versus Friday. Buy nothing.`;
+  let note = `${changed}. Buy nothing.`;
 
-  if (b.reference == null && b.spot) {
-    decision = "buy";
-    pick = "xstocks";
-    note = `${b.name} is listed on xStocks. There is no Friday close here, so this is not a weekend gap. You can still buy the token.`;
-  } else if (b.reference == null) {
+  if (call.id === "thin") {
     decision = "refuse";
-    note = `${b.name} has no Friday close. This is not a weekend gap. Buy nothing.`;
-  } else if (call.id === "thin") {
-    decision = "refuse";
-    note = `${b.name} is ${move} versus Friday because the book is only ${formatUsd(b.venues.bstocks.liquidityUsd, 0)} deep. The gap is the empty market, not a discount. Buy nothing.`;
+    note = `${changed}. The book is only ${formatUsd(b.venues.bstocks.liquidityUsd, 0)} deep, so the move is the empty market, not a discount. Buy nothing.`;
   } else if (call.id === "news") {
     decision = "news";
     pick = fair.venue;
     const carryBit = carryNotArb ? ` Ondo is ${Math.round(carryBps ?? 0)} bp rich, and that part is the dividend, not an arb.` : "";
-    note = `${b.name} is ${move} versus Friday. Bitcoin does not explain a move that large. This may be news.${carryBit} A small buy of the 1:1 token is allowed. It may not come back on Monday.`;
+    note = `${changed}. Bitcoin does not explain a move that large. This may be news.${carryBit} A small buy of the 1:1 token is allowed.`;
   } else if (carryBps != null && carryBps >= 120) {
     decision = "leave";
     note = `Ondo is ${Math.round(carryBps)} bp rich to the 1:1 token. That is more than a normal dividend. Do not arb it. Buy nothing.`;
@@ -605,15 +629,15 @@ export function advise(b: Book, sizeUsd: number): Advice {
   } else if (call.id === "noise") {
     decision = "leave";
     const carryBit = carryNotArb ? `Ondo is ${Math.round(carryBps ?? 0)} bp rich to the 1:1 token. That is the dividend, not an arb. ` : "";
-    note = `${carryBit}${b.name} is ${move} versus Friday. Fees cost more than that. Buy nothing.`;
+    note = `${carryBit}${changed}. Fees cost more than that. Buy nothing.`;
   } else if (carryNotArb) {
     decision = "buy";
     pick = fair.venue;
-    note = `Ondo is ${Math.round(carryBps ?? 0)} bp rich to the 1:1 token. That is the dividend, not an arb. ${b.name} is ${move} versus Friday, in line with Bitcoin. Buy ${VENUES[pick].label}, or buy nothing.`;
+    note = `Ondo is ${Math.round(carryBps ?? 0)} bp rich to the 1:1 token. That is the dividend, not an arb. ${changed}, in line with Bitcoin. Buy ${VENUES[pick].label}, or buy nothing.`;
   } else {
     decision = "buy";
     pick = cheapest.venue === "ondo" ? fair.venue : cheapest.venue;
-    note = `${b.name} is ${move} versus Friday, in line with the weekend crypto move. Buy ${VENUES[pick].label}, or buy nothing.`;
+    note = `${changed}, in line with Bitcoin. Buy ${VENUES[pick].label}, or buy nothing.`;
   }
 
   return { ranked, cheapest, fair, pick, carryBps, carryNotArb, note, decision };
@@ -627,7 +651,7 @@ export function spreadPath(b: Book): { label: string; bps: number }[] {
   if (b.tape && b.tape.length >= 2) return b.tape;
   const end = Math.round(gapOf(b) ?? 0);
   return [
-    { label: "Friday", bps: 0 },
+    { label: "24h ago", bps: 0 },
     { label: "Now", bps: end },
   ];
 }
@@ -671,9 +695,8 @@ export function checkGuard(input: {
     blockers.push(`Held value is ${formatUsd(input.heldUsd)}. Cannot sell ${formatUsd(input.sizeUsd)}.`);
   }
   if (input.call.id === "thin") blockers.push("The book is too thin. The gap is the empty market, not a price. Gapline will not send this.");
-  if (input.call.id === "unscored") blockers.push("No Friday close. Gapline will not treat this as a stock trade.");
-  if (input.call.id === "news") notes.push("This looks like news. A small buy is allowed, and it may not come back on Monday.");
-  if (input.call.id === "noise") notes.push("Inside a few cents of Friday. You would pay a fee to do nothing.");
+  if (input.call.id === "news") notes.push("This 24 hour move looks like news. A small buy is allowed.");
+  if (input.call.id === "noise") notes.push("The last 24 hours barely moved the price. You would pay a fee to do nothing.");
   notes.push("You sign this in your wallet. It is a real BNB Chain transaction.");
   return { ok: blockers.length === 0, blockers, notes };
 }
@@ -721,10 +744,10 @@ export function quoteOrder(input: {
     walletReady: input.walletReady,
   });
   if (b.spot && b.reference == null) {
-    guard.blockers = guard.blockers.filter((line) => !line.includes("No Friday") && !line.includes("too thin"));
+    guard.blockers = guard.blockers.filter((line) => !line.includes("too thin"));
     guard.ok = guard.blockers.length === 0;
-    guard.notes.unshift("No Friday close, so this is not a gap. The pool sets the number of shares.");
-  } else if (!b.live && ranked.liquidityUsd < 80_000 && !guard.blockers.some((line) => line.includes("too thin") || line.includes("No Friday"))) {
+    guard.notes.unshift("The pool sets the number of shares from the latest price.");
+  } else if (!b.live && ranked.liquidityUsd < 80_000 && !guard.blockers.some((line) => line.includes("too thin"))) {
     guard.blockers.push(`${VENUES[venue].label} is only ${formatUsd(ranked.liquidityUsd, 0)} deep. Gapline will not send this order.`);
     guard.ok = false;
   }
@@ -955,7 +978,7 @@ export function compileRule(source: string, maxSizeUsd: number): CompiledRule {
       rotatePct,
       flattenAfterOpenMin,
       notes,
-      summary: `If BTC is down ${dropPct}% since the Friday close, rotate ${rotatePct}% of the book into defensives.`,
+      summary: `If BTC is down ${dropPct}% over the last day, rotate ${rotatePct}% of the book into defensives.`,
     };
   }
 
@@ -984,8 +1007,9 @@ export function compileRule(source: string, maxSizeUsd: number): CompiledRule {
   if (ticker && /buy|sell|gap|under|premium|reference|discount|free/i.test(text)) {
     const named = book(ticker);
     const call = named ? classify(named) : null;
-    if (!named || named.reference == null || call?.id === "unscored") {
-      return fail(source, `${named?.name ?? ticker} has no Friday close. This is not a weekend gap. Buy nothing.`);
+    const livePrice = named ? named.venues.xstocks.price || named.venues.bstocks.price : 0;
+    if (!named || !(livePrice > 0)) {
+      return fail(source, `${named?.name ?? ticker} has no live price yet. Buy nothing.`);
     }
     if (call?.id === "thin") {
       return fail(
@@ -1017,8 +1041,8 @@ export function compileRule(source: string, maxSizeUsd: number): CompiledRule {
       notes,
       summary:
         side === "buy-discount"
-          ? `Buy ${formatUsd(sizeUsd)} of ${ticker} when it trades ${formatBps(-minAbsSpreadBps)} or cheaper versus the frozen reference${requireClosed ? ", and only while the cash market is closed" : ""}.`
-          : `Sell ${formatUsd(sizeUsd)} of ${ticker} when it trades ${formatBps(minAbsSpreadBps)} or richer versus the frozen reference${requireClosed ? ", and only while the cash market is closed" : ""}.`,
+          ? `Buy ${formatUsd(sizeUsd)} of ${ticker} when it trades ${formatBps(-minAbsSpreadBps)} or cheaper than the latest price${requireClosed ? ", and only while the cash market is closed" : ""}.`
+          : `Sell ${formatUsd(sizeUsd)} of ${ticker} when it trades ${formatBps(minAbsSpreadBps)} or richer than the latest price${requireClosed ? ", and only while the cash market is closed" : ""}.`,
     };
   }
 
@@ -1033,7 +1057,7 @@ export function dryRun(rule: CompiledRule, positions: Position[], cash: number, 
   if (!rule.ok) return { fired: false, reason: rule.summary, orders: [] };
   if (rule.kind === "gap") {
     const b = book(rule.symbol);
-    if (!b || b.reference == null) return { fired: false, reason: `${rule.symbol} has no cash reference.`, orders: [] };
+    if (!b || !(b.venues.xstocks.price > 0 || b.venues.bstocks.price > 0)) return { fired: false, reason: `${rule.symbol} has no live price.`, orders: [] };
     if (rule.requireClosed && MARKET.status !== "closed") return { fired: false, reason: "Cash market is open.", orders: [] };
     const call = classify(b, btcMoveBps);
     if (call.id === "thin") return { fired: false, reason: `${rule.symbol} is too thin. The rule refuses the book.`, orders: [] };
@@ -1041,14 +1065,14 @@ export function dryRun(rule: CompiledRule, positions: Position[], cash: number, 
     if (rule.side === "buy-discount" && gap > -rule.minAbsSpreadBps) {
       return {
         fired: false,
-        reason: `${rule.symbol} is ${formatBps(gap)} versus the Friday close, not ${formatBps(-rule.minAbsSpreadBps)} or cheaper.`,
+        reason: `${rule.symbol} is ${formatBps(gap)} over the last 24 hours, not ${formatBps(-rule.minAbsSpreadBps)} or cheaper.`,
         orders: [],
       };
     }
     if (rule.side === "sell-premium" && gap < rule.minAbsSpreadBps) {
       return {
         fired: false,
-        reason: `${rule.symbol} is ${formatBps(gap)} versus the Friday close, not ${formatBps(rule.minAbsSpreadBps)} or richer.`,
+        reason: `${rule.symbol} is ${formatBps(gap)} over the last 24 hours, not ${formatBps(rule.minAbsSpreadBps)} or richer.`,
         orders: [],
       };
     }
@@ -1058,7 +1082,7 @@ export function dryRun(rule: CompiledRule, positions: Position[], cash: number, 
     }
     return {
       fired: true,
-      reason: `${rule.symbol} is ${formatBps(gap)} versus reference. ${call.detail}`,
+      reason: `${rule.symbol} is ${formatBps(gap)} over the last 24 hours. ${call.detail}`,
       orders: [{ symbol: rule.symbol, side, sizeUsd: Math.min(rule.sizeUsd, side === "buy" ? cash : positionValue(positions, rule.symbol)) }],
     };
   }
@@ -1066,7 +1090,7 @@ export function dryRun(rule: CompiledRule, positions: Position[], cash: number, 
     if (btcMoveBps > -rule.dropPct * 100) {
       return {
         fired: false,
-        reason: `BTC is ${formatBps(btcMoveBps)} since the Friday close, not down ${rule.dropPct}%.`,
+        reason: `BTC is ${formatBps(btcMoveBps)} over the last day, not down ${rule.dropPct}%.`,
         orders: [],
       };
     }
@@ -1095,7 +1119,7 @@ export function dryRun(rule: CompiledRule, positions: Position[], cash: number, 
       return {
         fired: false,
         reason: quiet
-          ? `${quiet.name} is the widest liquid name, and it is only ${formatMove(gapOf(quiet))} versus Friday. Fees cost more than that. Nothing is sent.`
+          ? `${quiet.name} is the widest liquid name, and it is only ${formatMove(gapOf(quiet))} over the last 24 hours. Fees cost more than that. Nothing is sent.`
           : "Nothing liquid is available. Nothing is sent.",
         orders: [],
       };
@@ -1103,7 +1127,7 @@ export function dryRun(rule: CompiledRule, positions: Position[], cash: number, 
     const call = classify(pick);
     return {
       fired: true,
-      reason: `${pick.name} is the widest liquid gap, ${formatMove(gapOf(pick))} versus Friday. ${call.detail}`,
+      reason: `${pick.name} moved the most of the liquid names, ${formatMove(gapOf(pick))} over the last 24 hours. ${call.detail}`,
       orders: [{ symbol: pick.symbol, side: "buy", sizeUsd: Math.min(rule.sizeUsd, cash) }],
     };
   }
@@ -1180,10 +1204,11 @@ export function explainCopy(b: Book, now = new Date()): string {
     ? `The cash market is open and closes in ${formatRemain(clock.at - now.getTime())}.`
     : `The cash market is closed and opens in ${formatRemain(clock.at - now.getTime())}.`;
   const prints = `Right now xStocks is ${formatUsd(b.venues.xstocks.price)}, bStocks is ${formatUsd(b.venues.bstocks.price)}, and Ondo is ${formatUsd(b.venues.ondo.price)}.`;
+  const price = b.venues.xstocks.price || b.venues.bstocks.price;
   const gapLine =
     gap == null
-      ? `${b.symbol} has no cash close on this feed, so this is the live token print, not a weekend gap.`
-      : `${b.symbol} is ${formatBps(gap)} versus the cash reference of ${formatUsd(b.reference ?? 0)}.`;
+      ? `${b.symbol} is on the latest print${price > 0 ? ` at ${formatUsd(price)}` : ""}. The 24 hour change is still loading.`
+      : `${b.symbol} is ${formatBps(gap)} over the last 24 hours. The latest print is ${formatUsd(price)}.`;
   const carry =
     advice.carryBps == null
       ? ""

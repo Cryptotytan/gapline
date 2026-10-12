@@ -15,7 +15,7 @@ const ROWS = [
 const FAQS = [
   {
     q: "What is Gapline?",
-    a: "A weekend desk for tokenized US stocks on BNB Chain. It shows the gap versus Friday’s reference, the amount you type, and the price a buy would actually pay.",
+    a: "A desk for tokenized US stocks on BNB Chain. It shows the last 24 hours, the latest price, the amount you type, and the price a buy would actually pay.",
   },
   {
     q: "How do I buy?",
@@ -79,12 +79,12 @@ export function Landing() {
   }, []);
 
   return (
-    <div className="relative min-h-screen max-w-[100vw] overflow-x-clip bg-bg text-fg">
+    <div className="relative min-h-dvh max-w-[100vw] overflow-x-clip bg-bg text-fg">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(700px_280px_at_50%_0%,rgba(224,161,90,0.16),transparent_70%)]" aria-hidden />
 
-      <header className="sticky top-0 z-30 bg-bg/90 backdrop-blur-md">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4">
-          <Link to="/" className="font-display text-2xl leading-none text-fg">
+      <header className="sticky top-0 z-30 bg-bg/90 pt-[env(safe-area-inset-top)] backdrop-blur-md">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-2 px-3 sm:h-16 sm:gap-4 sm:px-4">
+          <Link to="/" className="font-display text-xl leading-none text-fg sm:text-2xl">
             Gapline
           </Link>
           <nav className="hidden gap-1 sm:flex">
@@ -94,7 +94,7 @@ export function Landing() {
               </button>
             ))}
           </nav>
-          <button type="button" onClick={() => onEnter("desk")} className="h-10 shrink-0 rounded-full bg-primary px-4 text-sm font-medium text-primary-fg">
+          <button type="button" onClick={() => onEnter("desk")} className="h-10 shrink-0 rounded-full bg-primary px-3 text-sm font-medium text-primary-fg sm:px-4">
             Open the desk
           </button>
         </div>
@@ -103,7 +103,7 @@ export function Landing() {
       <main id="top" className="relative">
         <section className="mx-auto flex max-w-3xl flex-col items-center px-4 pt-8 pb-6 text-center sm:pt-24 sm:pb-8">
           <p className="rounded-full bg-surface px-3 py-1 text-xs tracking-wide text-muted">Weekend desk · spot only</p>
-          <h1 className="mt-4 font-sans text-[2rem] leading-[0.95] font-medium tracking-tight text-fg sm:mt-6 sm:text-7xl">
+          <h1 className="mt-4 max-w-full font-sans text-[1.7rem] leading-[0.95] font-medium tracking-tight text-fg min-[380px]:text-[2rem] sm:mt-6 sm:text-7xl">
             THE BELL RINGS.
             <br />
             THE GAP STAYS OPEN.
@@ -224,7 +224,7 @@ export function Landing() {
                 <Mark symbol="AAPL" name="Apple" />
                 <div>
                   <p className="font-display text-2xl text-fg sm:text-3xl">Apple</p>
-                  <p className="text-sm text-muted">Scored against Friday</p>
+                  <p className="text-sm text-muted">Last 24 hours</p>
                 </div>
               </div>
               <p className="mt-4 inline-flex rounded-full bg-primary/15 px-2.5 py-1 text-xs text-primary">Likely revert</p>

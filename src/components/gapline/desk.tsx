@@ -11,6 +11,7 @@ import {
   gapOf,
   listRoutes,
   marketClock,
+  stockPrice,
   type Book,
 } from "@/lib/gapline/model";
 import { CallBadge, Kicker, Mark, Panel, btnGhost, btnPrimary } from "./ui";
@@ -51,10 +52,10 @@ export function Desk() {
   const selected = state.books.find((b) => b.symbol === state.symbol) ?? state.books[0];
   const rest = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = q ? state.books : state.books.filter((book) => book.reference != null);
+    const list = state.books;
     return list
       .filter((b) => !q || b.symbol.toLowerCase().includes(q) || b.name.toLowerCase().includes(q))
-      .sort((a, c) => Math.abs(gapOf(c) ?? 0) - Math.abs(gapOf(a) ?? 0))
+      .sort((a, c) => Math.abs(gapOf(c) ?? -1) - Math.abs(gapOf(a) ?? -1))
       .slice(0, q ? 40 : list.length);
   }, [query, state.books]);
   if (!selected) return <Panel className="p-4 text-sm text-muted">Stocks are still loading.</Panel>;
@@ -68,13 +69,13 @@ export function Desk() {
         </div>
         <Panel>
           <div className="px-3 py-3 sm:px-4 sm:py-4">
-            <Kicker>Since Friday’s close</Kicker>
+            <Kicker>Last 24 hours</Kicker>
             <h2 className="font-display text-xl text-fg sm:text-2xl">Select Stock</h2>
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search Apple, Tesla…"
-              className="mt-3 h-11 w-full rounded-xl bg-raised px-3 text-sm text-fg outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="mt-3 h-11 w-full rounded-xl bg-raised px-3 text-base text-fg outline-none focus-visible:ring-2 focus-visible:ring-primary sm:text-sm"
             />
           </div>
           <ul className="flex max-h-80 flex-col gap-1 overflow-y-auto px-2 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:max-h-[32rem]">
@@ -125,6 +126,7 @@ function Clock() {
 function NameRow({ book, on, onPick }: { book: Book; on: boolean; onPick: () => void }) {
   const call = classify(book);
   const gap = gapOf(book);
+  const price = stockPrice(book);
   return (
     <li>
       <button type="button" onClick={onPick} className={`flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left ${on ? "bg-raised" : "hover:bg-raised"}`}>
@@ -133,7 +135,10 @@ function NameRow({ book, on, onPick }: { book: Book; on: boolean; onPick: () => 
           <span className="block truncate text-sm text-fg">{book.name}</span>
           <span className="block text-xs text-muted">{book.symbol}</span>
         </span>
-        <span className={`text-sm tabular-nums ${gap != null && gap < 0 ? "text-down" : "text-primary"}`}>{formatMove(gap)}</span>
+        <span className="text-right">
+          <span className="block text-sm tabular-nums text-fg">{price > 0 ? formatUsd(price) : "…"}</span>
+          <span className={`block text-xs tabular-nums ${gap != null && gap < 0 ? "text-down" : "text-primary"}`}>{formatMove(gap)}</span>
+        </span>
         <span className="hidden sm:inline">
           <CallBadge id={call.id} label={call.label} />
         </span>
@@ -296,7 +301,10 @@ export function GapChart({ book, bare = false, compact = false }: { book: Book; 
   const line = coords.map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
   const floor = h - padB;
   const area = `${line} L${coords[coords.length - 1].x.toFixed(1)},${floor.toFixed(1)} L${coords[0].x.toFixed(1)},${floor.toFixed(1)} Z`;
-  const pointPrice = book.reference != null && cursor ? book.reference * (1 + cursor.bps / 10_000) : null;
+  const live = book.venues.xstocks.price || book.venues.bstocks.price;
+  const last = path[path.length - 1]?.bps ?? 0;
+  const open = live > 0 ? live / (1 + last / 10_000) : 0;
+  const pointPrice = open > 0 && cursor ? open * (1 + cursor.bps / 10_000) : null;
   const axis = (bps: number) => {
     const pct = bps / 100;
     const digits = Math.abs(pct) >= 10 ? 0 : Math.abs(pct) >= 1 ? 1 : 2;
@@ -336,7 +344,7 @@ export function GapChart({ book, bare = false, compact = false }: { book: Book; 
         viewBox={`0 0 ${w} ${h}`}
         className={`${compact ? "h-[128px] sm:h-[150px]" : "h-[180px] sm:h-[220px]"} w-full touch-none`}
         role="img"
-        aria-label={`${book.name} since Friday`}
+        aria-label={`${book.name} over the last 24 hours`}
         onPointerMove={(event) => follow(event.clientX, event.currentTarget)}
         onPointerDown={(event) => follow(event.clientX, event.currentTarget)}
         onPointerLeave={() => setCursor(null)}
@@ -389,7 +397,7 @@ export function GapChart({ book, bare = false, compact = false }: { book: Book; 
         <Mark symbol={book.symbol} name={book.name} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm text-fg">{book.name}</p>
-          <p className="text-xs text-muted">{book.live ? "On-chain mark versus the last official print" : "Move across the weekend. Basis points versus Friday."}</p>
+          <p className="text-xs text-muted">Last 24 hours. Move across the line.</p>
         </div>
         <p className={`font-display text-2xl leading-none tabular-nums sm:text-3xl ${down ? "text-down" : "text-primary"}`}>{formatMove(cursor?.bps ?? gap)}</p>
       </div>
@@ -423,14 +431,14 @@ function BuyDock({ book }: { book: Book }) {
   }
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-bg/95 px-3 pt-2 pb-[max(0.6rem,env(safe-area-inset-bottom))] backdrop-blur-sm lg:hidden">
+    <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-bg/95 px-3 pt-2 pb-[max(0.6rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] backdrop-blur-sm lg:hidden">
       <div className="mx-auto flex max-w-6xl flex-col gap-2">
         {held && <p className="text-sm text-down">Still no. Nothing was sent.</p>}
         <div className="flex items-center gap-2">
           <Mark symbol={book.symbol} name={book.name} />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm text-fg">{book.name}</span>
-            <span className="block truncate text-xs text-muted">{formatMove(gapOf(book))} vs Friday</span>
+            <span className="block truncate text-xs text-muted">{formatMove(gapOf(book))} in 24h</span>
           </span>
           <button type="button" className={`${btnPrimary} shrink-0`} onClick={go}>
             {label}

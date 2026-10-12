@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useDesk } from "@/lib/gapline/store";
-import { explainCopy, formatRemain, formatUsd, marketClock } from "@/lib/gapline/model";
+import { explainCopy, formatRemain, formatUsd, marketClock, stockPrice } from "@/lib/gapline/model";
 import { Kicker, Mark, Panel, field } from "./ui";
 
 export function ExplainView() {
@@ -64,6 +64,7 @@ export function ExplainView() {
                       <span className="block truncate text-sm text-fg">{item.name}</span>
                       <span className="block text-xs text-muted">{item.symbol}</span>
                     </span>
+                    <span className="text-sm tabular-nums text-fg">{stockPrice(item) > 0 ? formatUsd(stockPrice(item)) : "…"}</span>
                   </button>
                 </li>
               ))}

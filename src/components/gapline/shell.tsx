@@ -5,7 +5,7 @@ import { activateSavedWallet, describeSmartWallet, disconnectSmart, finishSmartW
 import { disconnectLinked, isDismissed, markForName, pinSavedProvider, readActive, readLinked, rememberLinked, setActive, undismissWallet, type LinkedWallet } from "@/lib/gapline/wallet-book";
 import { ConnectModal } from "./connect-modal";
 import { WalletDrawer } from "./wallet-drawer";
-import { applyCashPrints, appendCatalog, applyChainMarks, applyLiveSnapshot, getCashPrints, getCatalog, getChainMarks, getLiveSnapshot, getLiveTape, mergeTape, tapeSession } from "@/lib/gapline/rwa";
+import { applyCashPrints, appendCatalog, applyChainMarks, applyDayMoves, applyLiveSnapshot, applyQuotes, getCashPrints, getCatalog, getChainMarks, getDayMoves, getLiveSnapshot, getLiveTape, getQuotes, mergeTape, tapeSession } from "@/lib/gapline/rwa";
 import { AgentView } from "./agent-view";
 import { BasketsView } from "./baskets-view";
 import { Desk } from "./desk";
@@ -54,9 +54,65 @@ function Shell() {
     let stop = false;
     let settled = false;
     const booksRef = { current: state.books };
+    const marksRef = { current: {} as Record<string, string> };
+    const liveRef = { current: state.live };
     booksRef.current = state.books;
     const load = () => {
       const snapshotPromise = getLiveSnapshot();
+      const catalogPromise = getCatalog();
+      const movesRef = { current: {} as Record<string, number> };
+      const quotesRef = { current: [] as { symbol: string; price: number; dayBps: number | null }[] };
+      const show = (books: typeof booksRef.current) => applyDayMoves(applyQuotes(books, quotesRef.current), movesRef.current);
+      catalogPromise.then((catalog) => {
+        if (stop || !catalog.ok) return;
+        rememberStocks(catalog.rows);
+        const merged = appendCatalog(booksRef.current, catalog.rows);
+        marksRef.current = { ...marksRef.current, ...merged.marks };
+        if (!settled) {
+          const live = liveRef.current ?? { ok: true as const, open: false, nextAt: null, clock: false, detail: "Live prices from the latest print. The change next to each stock is the last 24 hours." };
+          liveRef.current = live;
+          const books = show(merged.books);
+          booksRef.current = books;
+          settled = true;
+          dispatch({ type: "tape", books, marks: marksRef.current, live });
+        }
+        const listed = merged.books.filter((book) => book.address);
+        const symbols = merged.books.map((book) => book.symbol);
+        for (let index = 0; index < symbols.length; index += 20) {
+          const slice = symbols.slice(index, index + 20);
+          void getQuotes({ data: { symbols: slice } }).then((quotes) => {
+            if (stop || !quotes.ok || !quotes.rows.length || !liveRef.current) return;
+            const seen = new Map(quotesRef.current.map((row) => [row.symbol, row]));
+            for (const row of quotes.rows) seen.set(row.symbol, row);
+            quotesRef.current = [...seen.values()];
+            if (!settled) return;
+            const next = show(booksRef.current);
+            booksRef.current = next;
+            dispatch({ type: "tape", books: next, marks: marksRef.current, live: liveRef.current });
+          });
+        }
+        const addresses = [...new Set(listed.map((book) => book.address as string))];
+        for (let index = 0; index < addresses.length; index += 25) {
+          const slice = addresses.slice(index, index + 25);
+          void getDayMoves({ data: { addresses: slice } }).then((moves) => {
+            if (stop || !moves.ok) return;
+            Object.assign(movesRef.current, moves.moves);
+            if (!settled || !liveRef.current) return;
+            const next = show(booksRef.current);
+            booksRef.current = next;
+            dispatch({ type: "tape", books: next, marks: marksRef.current, live: liveRef.current });
+          });
+        }
+        for (let index = 0; index < addresses.length; index += 40) {
+          const slice = addresses.slice(index, index + 40);
+          void getChainMarks({ data: { addresses: slice } }).then((marks) => {
+            if (stop || !marks.ok || !settled || !liveRef.current) return;
+            const next = show(applyChainMarks(booksRef.current, marks.prices));
+            booksRef.current = next;
+            dispatch({ type: "tape", books: next, marks: marksRef.current, live: liveRef.current });
+          });
+        }
+      });
       snapshotPromise.then((snapshot) => {
         if (stop || settled || !snapshot.ok) return;
         const books = applyLiveSnapshot(booksRef.current, snapshot.rows, snapshot.btcMoveBps);
@@ -68,19 +124,19 @@ function Shell() {
           live: { ok: true, open: false, nextAt: null, clock: false, detail: snapshot.detail },
         });
       });
-      Promise.all([getLiveTape(), getCashPrints(), getCatalog(), snapshotPromise])
+      Promise.all([getLiveTape(), getCashPrints(), catalogPromise, snapshotPromise])
         .then(([result, cash, catalog, snapshot]) => {
           if (stop) return;
-          settled = true;
           const previous = booksRef.current;
           const base = result.ok ? mergeTape(result.tokens).books : previous;
           const kept = base.map((book) => {
             const older = previous.find((item) => item.symbol === book.symbol);
-            return older?.tape && !book.tape ? { ...book, tape: older.tape } : book;
+            const withTape = older?.tape && !book.tape ? { ...book, tape: older.tape } : book;
+            return withTape.dayBps == null && older?.dayBps != null ? { ...withTape, dayBps: older.dayBps } : withTape;
           });
           const priced = cash.ok ? applyCashPrints(kept, cash.rows) : kept;
           const merged = catalog.ok ? appendCatalog(priced, catalog.rows) : { books: priced, marks: {} };
-          const books = snapshot.ok ? applyLiveSnapshot(merged.books, snapshot.rows, snapshot.btcMoveBps) : merged.books;
+          const books = show(snapshot.ok ? applyLiveSnapshot(merged.books, snapshot.rows, snapshot.btcMoveBps) : merged.books);
           if (catalog.ok) {
             rememberStocks(catalog.rows);
             invalidateAssets();
@@ -98,17 +154,11 @@ function Shell() {
                   detail: "Prices are the last market print. The on-chain mark did not come back.",
                 }
               : { ok: false as const, detail: session.ok ? session.detail : "Prices did not come back." };
+          marksRef.current = merged.marks;
+          liveRef.current = live;
+          settled = true;
           dispatch({ type: "tape", books, marks: merged.marks, live });
           booksRef.current = books;
-          const missing = books.filter((book) => book.address && !(book.venues.xstocks.price > 0)).map((book) => book.address as string);
-          if (missing.length) {
-            void getChainMarks({ data: { addresses: missing.slice(0, 60) } }).then((marks) => {
-              if (stop || !marks.ok) return;
-              const next = applyChainMarks(booksRef.current, marks.prices);
-              booksRef.current = next;
-              dispatch({ type: "tape", books: next, marks: merged.marks, live });
-            });
-          }
         })
         .catch(() => {
           if (stop) return;
@@ -390,8 +440,8 @@ function Shell() {
   });
   const mine = state.activity.filter((item) => (item.wallet ?? "") === (state.address ?? ""));
   return (
-    <div className="min-h-screen bg-bg text-fg">
-      <header className="sticky top-0 z-30 bg-bg/90 backdrop-blur-md">
+    <div className="min-h-dvh bg-bg text-fg">
+      <header className="sticky top-0 z-30 bg-bg/90 pt-[env(safe-area-inset-top)] backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
           <a href="/" className="font-display text-xl leading-none text-fg sm:text-3xl">
             Gapline
@@ -511,7 +561,7 @@ function Shell() {
           onError={(message) => dispatch({ type: "note", title: "Wallet", detail: message })}
         />
       )}
-      <main className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-3 py-3 sm:gap-5 sm:px-4 sm:py-5">
+      <main className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:gap-5 sm:px-4 sm:py-5">
         {mine[0] && mine[0].id !== 0 && !(mine[0].title === "Wallet connected" && !state.address) && (
           <p className="rounded-2xl bg-surface px-4 py-3 text-sm text-pretty text-fg">
             <span className="text-primary">{mine[0].title}.</span> <span className="text-muted">{mine[0].detail}</span>

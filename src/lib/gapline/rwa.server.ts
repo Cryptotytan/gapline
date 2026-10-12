@@ -145,19 +145,20 @@ let catalogCache: { at: number; rows: CatalogRow[] } | null = null;
 
 export async function fetchCatalog(): Promise<{ ok: true; rows: CatalogRow[] } | { ok: false; detail: string }> {
   if (catalogCache && Date.now() - catalogCache.at < 10 * 60_000) return { ok: true, rows: catalogCache.rows };
+  const pages = await Promise.all(
+    Array.from({ length: 12 }, (_, page) =>
+      fetch(`https://api.xstocks.fi/api/v2/public/assets?page=${page}`, {
+        headers: { Accept: "application/json", "User-Agent": "Gapline" },
+        signal: AbortSignal.timeout(5000),
+      })
+        .then((res) => (res.ok ? (res.json() as Promise<{ nodes?: { name?: string; symbol?: string; underlyingSymbol?: string; logo?: string; deployments?: { network?: string; address?: string }[] }[]; page?: { hasNextPage?: boolean } }>) : null))
+        .catch(() => null),
+    ),
+  );
   const rows: CatalogRow[] = [];
   const seen = new Set<string>();
-  for (let page = 0; page < 20; page += 1) {
-    const res = await fetch(`https://api.xstocks.fi/api/v2/public/assets?page=${page}`, {
-      headers: { Accept: "application/json", "User-Agent": "Gapline" },
-      signal: AbortSignal.timeout(8000),
-    }).catch(() => null);
-    if (!res?.ok) break;
-    const body = (await res.json()) as {
-      nodes?: { name?: string; symbol?: string; underlyingSymbol?: string; logo?: string; deployments?: { network?: string; address?: string }[] }[];
-      page?: { hasNextPage?: boolean };
-    };
-    for (const node of body.nodes ?? []) {
+  for (const body of pages) {
+    for (const node of body?.nodes ?? []) {
       const symbol = node.underlyingSymbol?.toUpperCase();
       const deployment = node.deployments?.find((item) => item.network === "BinanceSmartChain" && item.address);
       if (!symbol || !deployment?.address || !node.symbol || seen.has(symbol)) continue;
@@ -170,7 +171,6 @@ export async function fetchCatalog(): Promise<{ ok: true; rows: CatalogRow[] } |
         logo: node.logo ?? "",
       });
     }
-    if (!body.page?.hasNextPage) break;
   }
   if (rows.length < 20) return { ok: false, detail: "The xStocks list did not come back." };
   catalogCache = { at: Date.now(), rows };
@@ -292,6 +292,42 @@ async function xStockAsset(symbol: string): Promise<{ name: string; token: strin
   return { name: (body.name ?? symbol).replace(/ xStock$/i, ""), token: body.symbol, address, logo: body.logo ?? "" };
 }
 
+async function dayPercents(addresses: string[]): Promise<Record<string, number>> {
+  if (!addresses.length) return {};
+  const coins = addresses.map((address) => `bsc:${address}`).join(",");
+  const res = await fetch(`https://coins.llama.fi/percentage/${coins}`, {
+    headers: { Accept: "application/json", "User-Agent": "Gapline" },
+    signal: AbortSignal.timeout(4000),
+  }).catch(() => null);
+  if (!res?.ok) return {};
+  const body = (await res.json()) as { coins?: Record<string, number> };
+  const moves: Record<string, number> = {};
+  for (const [key, value] of Object.entries(body.coins ?? {})) {
+    const address = key.split(":")[1];
+    if (address && Number.isFinite(value)) moves[address.toLowerCase()] = Math.round(value * 100);
+  }
+  return moves;
+}
+
+let dayCache: { at: number; moves: Record<string, number> } | null = null;
+
+export async function fetchDayMoves(addresses: string[]) {
+  const unique = [...new Set(addresses.map((address) => address.toLowerCase()))].filter((address) => address.startsWith("0x")).slice(0, 30);
+  if (!unique.length) return { ok: true as const, moves: {} as Record<string, number> };
+  const now = Date.now();
+  const cached: Record<string, number> = {};
+  const missing: string[] = [];
+  for (const address of unique) {
+    const known = dayCache && now - dayCache.at < 60_000 ? dayCache.moves[address] : undefined;
+    if (known == null) missing.push(address);
+    else cached[address] = known;
+  }
+  if (!missing.length) return { ok: true as const, moves: cached };
+  const got = await dayPercents(missing);
+  dayCache = { at: now, moves: { ...(dayCache?.moves ?? {}), ...got } };
+  return { ok: true as const, moves: { ...cached, ...got } };
+}
+
 async function chainPrices(addresses: string[]): Promise<Record<string, number>> {
   const coins = addresses.map((address) => `bsc:${address}`).join(",");
   const res = await fetch(`https://coins.llama.fi/prices/current/${coins}`, {
@@ -338,8 +374,36 @@ async function chainTape(address: string, cash: number): Promise<{ label: string
   return keepServerTape(address, tape);
 }
 
+async function sparkQuotes(symbols: string[]): Promise<{ symbol: string; price: number; dayBps: number | null }[]> {
+  if (!symbols.length) return [];
+  const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/spark?symbols=${symbols.join(",")}&range=1d&interval=1d`, {
+    headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+    signal: AbortSignal.timeout(4000),
+  }).catch(() => null);
+  if (res?.status === 400 && symbols.length > 1) {
+    const mid = Math.ceil(symbols.length / 2);
+    const [left, right] = await Promise.all([sparkQuotes(symbols.slice(0, mid)), sparkQuotes(symbols.slice(mid))]);
+    return [...left, ...right];
+  }
+  if (!res?.ok) return [];
+  const body = (await res.json()) as Record<string, { close?: number[]; fulldayPrice?: number; fulldayChangePercent?: number }>;
+  return symbols.flatMap((symbol) => {
+    const row = body[symbol];
+    const price = row?.fulldayPrice || row?.close?.[row.close.length - 1] || 0;
+    if (!(price > 0)) return [];
+    const pct = row?.fulldayChangePercent;
+    return [{ symbol, price, dayBps: pct != null && Number.isFinite(pct) ? Math.round(pct * 100) : null }];
+  });
+}
+
+export async function fetchQuotes(symbols: string[]) {
+  const unique = [...new Set(symbols.map((symbol) => symbol.toUpperCase()))].filter((symbol) => /^[A-Z.]{1,12}$/.test(symbol)).slice(0, 20);
+  const rows = await sparkQuotes(unique);
+  return { ok: true as const, rows };
+}
+
 export async function fetchMarks(addresses: string[]) {
-  const unique = [...new Set(addresses.map((address) => address.toLowerCase()))].filter((address) => address.startsWith("0x")).slice(0, 60);
+  const unique = [...new Set(addresses.map((address) => address.toLowerCase()))].filter((address) => address.startsWith("0x")).slice(0, 40);
   if (!unique.length) return { ok: true as const, prices: {} as Record<string, number> };
   const prices = await chainPrices(unique);
   return { ok: true as const, prices };

@@ -7,7 +7,7 @@ export const btn =
 export const btnPrimary = `${btn} bg-primary text-primary-fg hover:bg-primary/90`;
 export const btnGhost = `${btn} bg-raised text-fg hover:bg-line`;
 export const field =
-  "h-11 w-full rounded-xl bg-raised px-3 text-sm text-fg outline-none ring-1 ring-transparent focus-visible:ring-primary";
+  "h-11 w-full rounded-xl bg-raised px-3 text-base text-fg outline-none ring-1 ring-transparent focus-visible:ring-primary sm:text-sm";
 
 export function XLogo({ className = "size-3.5" }: { className?: string }) {
   return (

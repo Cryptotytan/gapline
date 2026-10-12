@@ -35,7 +35,10 @@ export function ConnectModal({
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-md" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto bg-black/55 p-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-md sm:items-center sm:p-4"
+      onClick={onClose}
+    >
       <div className="w-full max-w-3xl" onClick={(event) => event.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between px-1">
           <p className="text-sm text-fg">Connect a wallet</p>
@@ -43,7 +46,7 @@ export function ConnectModal({
             ×
           </button>
         </div>
-        <div className="grid max-h-[min(40rem,calc(100vh-6rem))] gap-3 overflow-y-auto sm:grid-cols-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="grid max-h-[calc(100dvh-5.5rem)] gap-3 overflow-y-auto sm:max-h-[min(40rem,calc(100dvh-6rem))] sm:grid-cols-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <section className="rounded-3xl border border-line bg-surface p-4 shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
             <div className="flex items-center gap-2">
               {WALLET_CHOICES.slice(0, 4).map((wallet) => (

@@ -19,6 +19,8 @@
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
     scrollbar-width: none;
     -ms-overflow-style: none;
   }
@@ -28,9 +30,12 @@
       var(--color-bg);
     color: var(--color-fg);
     font-family: var(--font-sans);
+    min-height: 100dvh;
     overflow-x: clip;
     scrollbar-width: none;
     -ms-overflow-style: none;
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
   }
   html::-webkit-scrollbar,
   body::-webkit-scrollbar,
@@ -47,12 +52,31 @@
   [role="button"]:not(:disabled) {
     cursor: pointer;
   }
+  img,
+  svg,
+  video {
+    max-width: 100%;
+  }
   h1, h2, h3 {
     text-wrap: balance;
   }
   ::selection {
     background: rgba(224, 161, 90, 0.35);
     color: var(--color-fg);
+  }
+  @media (max-width: 640px) {
+    input,
+    select,
+    textarea {
+      font-size: 16px;
+    }
+  }
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
   }
 }
 

@@ -182,7 +182,7 @@ export function WalletDrawer({
   return (
     <div className="fixed inset-0 z-50">
       <button type="button" aria-label="Close wallet" className="absolute inset-0 bg-black/55 backdrop-blur-sm" onClick={onClose} />
-      <aside className="absolute inset-y-0 right-0 flex w-full max-w-[24rem] flex-col border-l border-line bg-[#121410] shadow-[0_0_80px_rgba(0,0,0,0.55)]" style={{ animation: "gapline-drawer .28s ease" }}>
+      <aside className="absolute inset-y-0 right-0 flex w-full max-w-[24rem] flex-col border-l border-line bg-[#121410] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-[0_0_80px_rgba(0,0,0,0.55)]" style={{ animation: "gapline-drawer .28s ease" }}>
         <div className="flex items-center gap-3 px-4 pt-4">
           <MarkFace wallet={current} />
           <div className="min-w-0 flex-1">

@@ -192,7 +192,7 @@ export function AgentView() {
           onChange={(e) => dispatch({ type: "rule-text", ruleText: e.target.value })}
           rows={4}
           placeholder="Type a command, or say what to buy."
-          className="mt-4 w-full rounded-xl bg-raised p-3 text-sm text-fg outline-none placeholder:text-muted focus-visible:ring-2 focus-visible:ring-primary"
+          className="mt-4 w-full rounded-xl bg-raised p-3 text-base text-fg outline-none placeholder:text-muted focus-visible:ring-2 focus-visible:ring-primary sm:text-sm"
         />
         <div className="mt-3 flex flex-col gap-2">
           {SAMPLES.map((sample) => (

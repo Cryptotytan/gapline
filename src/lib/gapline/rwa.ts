@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { BOOKS, setLiveBtc, type Book } from "./model";
+import { BOOKS, MAJOR_SYMBOLS, setLiveBtc, type Book } from "./model";
 
 export type RwaTokenLike = {
   binanceChainId?: string;
@@ -23,8 +23,8 @@ export type LiveNote =
   | { ok: true; open: boolean; nextAt: number | null; detail: string; clock: boolean }
   | { ok: false; detail: string };
 
-const LIVE_DETAIL = "Live BSC prints from Binance. The per-share price is converted from the token, not Friday’s official close.";
-const XSTOCKS_DETAIL = "Connected to the xStocks RWA API. Binance refused this network, so bStocks and Ondo stay on Friday’s tape.";
+const LIVE_DETAIL = "Live prices from the latest print. The change next to each stock is the last 24 hours.";
+const XSTOCKS_DETAIL = "Live xStocks prices. The change next to each stock is the last 24 hours.";
 
 export function tapeSession(tokens: RwaTokenLike[]): LiveNote {
   const info = tokens.find((token) => token.statusInfo)?.statusInfo;
@@ -54,9 +54,63 @@ export const getCatalog = createServerFn({ method: "POST" }).handler(async () =>
   return fetchCatalog();
 });
 
+export const getDayMoves = createServerFn({ method: "POST" })
+  .validator((input: { addresses?: string[] }) => ({
+    addresses: Array.isArray(input?.addresses) ? input.addresses.map((item) => String(item)).slice(0, 30) : [],
+  }))
+  .handler(async ({ data }) => {
+    const { fetchDayMoves } = await import("./rwa.server");
+    return fetchDayMoves(data.addresses);
+  });
+
+export function applyDayMoves(books: Book[], moves: Record<string, number>): Book[] {
+  return books.map((book) => {
+    const move = book.address ? moves[book.address.toLowerCase()] : undefined;
+    if (move == null || !Number.isFinite(move)) return book;
+    return { ...book, dayBps: move };
+  });
+}
+
+export const getQuotes = createServerFn({ method: "POST" })
+  .validator((input: { symbols?: string[] }) => ({
+    symbols: Array.isArray(input?.symbols) ? input.symbols.map((item) => String(item)).slice(0, 20) : [],
+  }))
+  .handler(async ({ data }) => {
+    const { fetchQuotes } = await import("./rwa.server");
+    return fetchQuotes(data.symbols);
+  });
+
+export function applyQuotes(books: Book[], rows: { symbol: string; price: number; dayBps: number | null }[]): Book[] {
+  const bySymbol = new Map(rows.map((row) => [row.symbol, row]));
+  return books.map((book) => {
+    const row = bySymbol.get(book.symbol);
+    if (!row || !(row.price > 0)) return book;
+    const priced = book.venues.xstocks.price > 0;
+    return {
+      ...book,
+      dayBps: book.dayBps != null ? book.dayBps : row.dayBps,
+      venues: priced
+        ? book.venues
+        : {
+            bstocks: {
+              ...book.venues.bstocks,
+              price: book.venues.bstocks.price > 0 ? book.venues.bstocks.price : row.price,
+              liquidityUsd: book.venues.bstocks.liquidityUsd || 250_000,
+            },
+            ondo: {
+              ...book.venues.ondo,
+              price: book.venues.ondo.price > 0 ? book.venues.ondo.price : row.price,
+              liquidityUsd: book.venues.ondo.liquidityUsd || 250_000,
+            },
+            xstocks: { ...book.venues.xstocks, price: row.price, liquidityUsd: book.venues.xstocks.liquidityUsd || 250_000 },
+          },
+    };
+  });
+}
+
 export const getChainMarks = createServerFn({ method: "POST" })
   .validator((input: { addresses?: string[] }) => ({
-    addresses: Array.isArray(input?.addresses) ? input.addresses.map((item) => String(item)).slice(0, 60) : [],
+    addresses: Array.isArray(input?.addresses) ? input.addresses.map((item) => String(item)).slice(0, 40) : [],
   }))
   .handler(async ({ data }) => {
     const { fetchMarks } = await import("./rwa.server");
@@ -69,7 +123,7 @@ export function applyChainMarks(books: Book[], prices: Record<string, number>): 
     if (!chain || chain <= 0) return book;
     const stock = book.venues.bstocks.price > 0 ? book.venues.bstocks.price : chain;
     const ondo = book.venues.ondo.price > 0 ? book.venues.ondo.price : chain;
-    const spot = book.venues.xstocks.price > 0 ? book.venues.xstocks.price : chain;
+    const spot = chain;
     return {
       ...book,
       live: true,
@@ -161,14 +215,14 @@ export function appendCatalog(books: Book[], rows: { symbol: string; name: strin
   });
   const known = new Set(next.map((book) => book.symbol));
   for (const row of rows) {
-    if (known.has(row.symbol)) continue;
+    if (known.has(row.symbol) || !MAJOR_SYMBOLS.has(row.symbol)) continue;
     if (row.logo) marks[row.symbol] = row.logo;
     next.push({
       symbol: row.symbol,
       name: row.name,
       baskets: [],
       reference: null,
-      about: "Listed on xStocks. Not scored as a weekend gap.",
+      about: "Listed on xStocks. The change is the last 24 hours.",
       spot: true,
       address: row.address,
       logo: row.logo,
