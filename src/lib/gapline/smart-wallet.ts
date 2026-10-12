@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { createPublicClient, createWalletClient, encodeFunctionData, http, parseUnits, type Address, type Hex } from "viem";
+import { createPublicClient, createWalletClient, encodeFunctionData, http, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { bsc } from "viem/chains";
 import { authClient, authEnabled, signIn } from "@/lib/auth/client";
@@ -10,7 +10,7 @@ const LEGACY = "gapline.smart.v1";
 const ACTIVE = "gapline.smart.active";
 const PENDING = "gapline.smart.pending";
 const SEAL = "gapline.xvault";
-const RPC = "https://bsc-dataseed.binance.org";
+const RPCS = ["https://bsc-dataseed.binance.org", "https://bsc.publicnode.com", "https://bsc-dataseed1.defibit.io", "https://1rpc.io/bnb"];
 
 type PublicRow = { kind: "x" | "email"; name: string; address: Address };
 type LegacyRow = { kind?: string; id?: string; address?: Address; key?: Hex };
@@ -22,7 +22,7 @@ type Provider = {
 let account: ReturnType<typeof privateKeyToAccount> | null = null;
 let signingKey: Hex | null = null;
 
-const publicClient = createPublicClient({ chain: bsc, transport: http(RPC) });
+const publicClient = createPublicClient({ chain: bsc, transport: http(RPCS[0]) });
 
 function markPending() {
   sessionStorage.setItem(PENDING, "1");
@@ -196,27 +196,36 @@ const erc20Transfer = [
   },
 ] as const;
 
-export async function transferFromSmart(input: { token: string | null; to: string; amount: number }) {
-  if (!account) throw new Error("Open the X wallet before sending.");
+export async function transferFromSmart(input: { token: string | null; to: string; units: bigint }) {
+  if (!account) throw new Error("Sign in with X again so this wallet can send.");
   const to = input.to.trim();
   if (!/^0x[a-fA-F0-9]{40}$/.test(to)) throw new Error("Enter the address you want to send to.");
-  if (!(input.amount > 0)) throw new Error("Enter an amount.");
-  const units = parseUnits(input.amount.toFixed(8).replace(/\.?0+$/, ""), 18);
-  const wallet = createWalletClient({ account, chain: bsc, transport: http(RPC) });
-  try {
-    if (!input.token) return await wallet.sendTransaction({ to: to as Address, value: units });
-    const data = encodeFunctionData({ abi: erc20Transfer, functionName: "transfer", args: [to as Address, units] });
-    return await wallet.sendTransaction({ to: input.token as Address, data });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    if (/insufficient funds|out of gas|gas required exceeds/i.test(message)) {
-      throw new Error("There wasn't enough gas. This wallet needs more BNB for the network fee.");
+  if (input.units <= 0n) throw new Error("Enter an amount.");
+  const tx = input.token
+    ? {
+        to: input.token as Address,
+        data: encodeFunctionData({ abi: erc20Transfer, functionName: "transfer", args: [to as Address, input.units] }),
+        value: 0n as const,
+      }
+    : { to: to as Address, value: input.units, data: undefined };
+  let last = "The send did not go through. Nothing was confirmed.";
+  for (const url of RPCS) {
+    try {
+      const wallet = createWalletClient({ account, chain: bsc, transport: http(url) });
+      return await wallet.sendTransaction(tx);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (/insufficient funds|out of gas|gas required exceeds/i.test(message)) {
+        throw new Error("There wasn't enough gas. This wallet needs more BNB for the network fee.");
+      }
+      const following = message.match(/following reason:\s*([^\n]+)/i);
+      const reverted = message.match(/execution reverted:?\s*(.+)/i);
+      const reason = following?.[1]?.trim() || (reverted?.[1] && !/^0x/i.test(reverted[1].trim()) ? reverted[1].trim() : "");
+      if (reason || /revert/i.test(message)) throw new Error(reason || message.replace(/^Error:\s*/, "").slice(0, 220));
+      last = message.replace(/^Error:\s*/, "").slice(0, 220) || last;
     }
-    const following = message.match(/following reason:\s*([^\n]+)/i);
-    const reverted = message.match(/execution reverted:?\s*(.+)/i);
-    const reason = following?.[1]?.trim() || (reverted?.[1] && !/^0x/i.test(reverted[1].trim()) ? reverted[1].trim() : "");
-    throw new Error(reason || message.replace(/^Error:\s*/, "").slice(0, 220) || "The send did not go through. Nothing was confirmed.");
   }
+  throw new Error(last);
 }
 
 export const sendWalletCode = createServerFn({ method: "POST" })
@@ -306,7 +315,7 @@ export async function finishSmartWalletWithX() {
 export function smartProvider(): Provider | null {
   if (!account) return null;
   const signer = account;
-  const wallet = createWalletClient({ account: signer, chain: bsc, transport: http(RPC) });
+  const wallet = createWalletClient({ account: signer, chain: bsc, transport: http(RPCS[0]) });
   return {
     async request({ method, params }) {
       if (method === "eth_requestAccounts" || method === "eth_accounts") return [signer.address];

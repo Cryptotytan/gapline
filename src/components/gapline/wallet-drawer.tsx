@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { formatUsd } from "@/lib/gapline/model";
+import { useDesk } from "@/lib/gapline/store";
 import { activateSavedWallet, exportSmartKey } from "@/lib/gapline/smart-wallet";
 import { contractFor, peekAssets, readAssets, sendAsset, shortAddress, type HeldAsset } from "@/lib/gapline/wallet";
 import { markForName, type LinkedWallet } from "@/lib/gapline/wallet-book";
@@ -59,6 +60,7 @@ export function WalletDrawer({
   const [to, setTo] = useState("");
   const [sendError, setSendError] = useState("");
   const [sending, setSending] = useState(false);
+  const { state } = useDesk();
   const current = linked.find((wallet) => wallet.address.toLowerCase() === address.toLowerCase()) ?? {
     address,
     name: isX ? "X wallet" : "Wallet",
@@ -79,6 +81,17 @@ export function WalletDrawer({
     return () => {
       stop = true;
     };
+  }, [open, address]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onAssets = (event: Event) => {
+      const detail = (event as CustomEvent<{ address: string; assets: HeldAsset[] }>).detail;
+      if (!detail || detail.address !== address.toLowerCase()) return;
+      setAssets(detail.assets);
+    };
+    window.addEventListener("gapline:assets", onAssets);
+    return () => window.removeEventListener("gapline:assets", onAssets);
   }, [open, address]);
 
   function closeSheet() {
@@ -111,6 +124,15 @@ export function WalletDrawer({
     setExportNote("");
   }
 
+  function dollars(asset: HeldAsset, size = asset.amount) {
+    if (size === asset.amount && asset.usd != null && asset.usd > 0) return asset.usd;
+    const mark = asset.amount > 0 && asset.usd != null && asset.usd > 0 ? asset.usd / asset.amount : 0;
+    if (mark > 0) return mark * size;
+    const book = state.books.find((item) => item.symbol === asset.symbol);
+    const price = book?.venues.xstocks.price || book?.reference || 0;
+    return price > 0 ? price * size : 0;
+  }
+
   async function send() {
     if (!picked) {
       setSendError("Select a token.");
@@ -125,10 +147,15 @@ export function WalletDrawer({
       setSendError("That amount is more than this wallet holds. Nothing was sent.");
       return;
     }
+    const token = picked.symbol === "BNB" ? null : picked.token || contractFor(picked.symbol);
+    if (picked.symbol !== "BNB" && !token) {
+      setSendError("This token has no contract on BNB Chain. Nothing was sent.");
+      return;
+    }
     setSending(true);
     setSendError("");
     try {
-      const hash = await sendAsset({ from: address, token: contractFor(picked.symbol), to, amount: size });
+      const hash = await sendAsset({ from: address, token, to, amount: size });
       onSent(`${size} ${picked.symbol} is on its way. ${hash.slice(0, 10)}…`);
       setSheet(null);
       setAmount("");
@@ -236,8 +263,8 @@ export function WalletDrawer({
                     <span className="block truncate text-[11px] text-muted">{asset.name}</span>
                   </span>
                   <span className="text-right">
-                    <span className="block text-sm tabular-nums text-fg">{asset.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })}</span>
-                    <span className="block text-[11px] tabular-nums text-muted">{asset.usd == null ? "" : formatUsd(asset.usd)}</span>
+                    <span className="block text-sm tabular-nums text-fg">{formatUsd(dollars(asset))}</span>
+                    <span className="block text-[11px] tabular-nums text-muted">{asset.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })} {asset.symbol}</span>
                   </span>
                 </li>
               ))}
@@ -305,10 +332,13 @@ export function WalletDrawer({
                     <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                       {shown.map((asset) => (
                         <li key={asset.symbol}>
-                          <button type="button" className={`flex h-11 w-full cursor-pointer items-center gap-2 rounded-2xl px-2 text-left text-sm ${picked?.symbol === asset.symbol ? "bg-primary text-primary-fg" : "bg-surface text-fg"}`} onClick={() => setPicked(asset)}>
+                          <button type="button" className={`flex h-12 w-full cursor-pointer items-center gap-2 rounded-2xl px-2 text-left text-sm ${picked?.symbol === asset.symbol ? "bg-primary text-primary-fg" : "bg-surface text-fg"}`} onClick={() => setPicked(asset)}>
                             {asset.logo ? <img src={asset.logo} alt="" className="size-7 rounded-full object-contain" /> : null}
-                            <span className="flex-1">{asset.symbol}</span>
-                            <span>{asset.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })}</span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block">{asset.symbol}</span>
+                              <span className={`block text-[11px] ${picked?.symbol === asset.symbol ? "text-primary-fg/80" : "text-muted"}`}>{formatUsd(dollars(asset))}</span>
+                            </span>
+                            <span className="tabular-nums">{asset.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })}</span>
                           </button>
                         </li>
                       ))}
@@ -317,6 +347,11 @@ export function WalletDrawer({
                       Amount
                       <input value={amount} inputMode="decimal" onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))} className="mt-1 h-11 w-full rounded-2xl bg-surface px-3 text-sm text-fg outline-none" placeholder="0" />
                     </label>
+                    {picked ? (
+                      <p className="mt-2 text-sm tabular-nums text-fg">
+                        {Number(amount) > 0 ? `Sending ${formatUsd(dollars(picked, Number(amount)))}` : `You hold ${formatUsd(dollars(picked))}`}
+                      </p>
+                    ) : null}
                     <label className="mt-3 block text-[11px] tracking-[0.14em] text-muted uppercase">
                       To
                       <input value={to} onChange={(event) => setTo(event.target.value.trim())} className="mt-1 h-11 w-full rounded-2xl bg-surface px-3 text-sm text-fg outline-none" placeholder="0x…" />

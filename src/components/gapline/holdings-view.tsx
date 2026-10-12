@@ -46,10 +46,11 @@ export function HoldingsView() {
   const [loading, setLoading] = useState(false);
   const [side, setSide] = useState<WalletSide>(cached?.side ?? "crypto");
   function valueOf(asset: HeldAsset) {
-    if (asset.usd != null) return asset.usd;
     const book = state.books.find((item) => item.symbol === asset.symbol);
-    const price = book?.venues.xstocks.price ?? book?.reference ?? 0;
-    return price * asset.amount;
+    const price = book?.venues.xstocks.price || book?.reference || 0;
+    if (asset.side === "stock") return price > 0 ? price * asset.amount : 0;
+    if (asset.usd != null && asset.usd >= 0) return asset.usd;
+    return price > 0 ? price * asset.amount : 0;
   }
   const byValue = (left: HeldAsset, right: HeldAsset) => valueOf(right) - valueOf(left);
   const crypto = assets.filter((asset) => asset.side === "crypto").sort(byValue);
@@ -57,7 +58,8 @@ export function HoldingsView() {
   const showing = side === "crypto" ? crypto : stocks;
   const cryptoValue = crypto.reduce((sum, asset) => sum + Math.max(0, valueOf(asset)), 0);
   const stockValue = stocks.reduce((sum, asset) => sum + valueOf(asset), 0);
-  const total = assets.length ? cryptoValue + stockValue : Math.max(0, state.cash);
+  const [ready, setReady] = useState(Boolean(cached));
+  const total = !state.address ? 0 : assets.length ? cryptoValue + stockValue : ready ? 0 : Math.max(0, state.cash);
 
   function remember(next: HeldAsset[], nextSide = side) {
     if (!state.address) return;
@@ -78,8 +80,10 @@ export function HoldingsView() {
       if (stop) return;
       setAssets(next);
       setLoading(false);
+      setReady(true);
       walletCache = { address: state.address as string, assets: next, side: walletCache?.address === state.address ? walletCache.side : "crypto" };
     }).catch(() => {
+      if (!stop) setReady(true);
       if (!stop && !known) setAssets([]);
     });
     return () => {
@@ -97,7 +101,18 @@ export function HoldingsView() {
       }, true).catch(() => undefined);
     };
     window.addEventListener("gapline:stocks", refresh);
-    return () => window.removeEventListener("gapline:stocks", refresh);
+    const onAssets = (event: Event) => {
+      const detail = (event as CustomEvent<{ address: string; assets: HeldAsset[] }>).detail;
+      if (!detail || detail.address !== (state.address as string).toLowerCase()) return;
+      setAssets(detail.assets);
+      setReady(true);
+      walletCache = { address: state.address as string, assets: detail.assets, side: walletCache?.side ?? side };
+    };
+    window.addEventListener("gapline:assets", onAssets);
+    return () => {
+      window.removeEventListener("gapline:stocks", refresh);
+      window.removeEventListener("gapline:assets", onAssets);
+    };
   }, [state.address]);
 
   const linked = state.address ? readLinked().find((wallet) => wallet.address.toLowerCase() === state.address?.toLowerCase()) : null;
@@ -298,8 +313,8 @@ function StockRow({ asset, onDone }: { asset: HeldAsset; onDone: () => void }) {
           <span className="block text-xs tabular-nums text-muted">{price > 0 ? formatUsd(price) : `${amountLabel(asset.amount)} shares`}</span>
         </span>
         <span className="text-right">
-          <span className="block text-sm tabular-nums text-fg">{amountLabel(asset.amount)}</span>
-          <span className="block text-xs tabular-nums text-muted">{value > 0 ? formatUsd(value) : "—"}</span>
+          <span className="block text-sm tabular-nums text-fg">{value > 0 ? formatUsd(value) : "—"}</span>
+          <span className="block text-xs tabular-nums text-muted">{amountLabel(asset.amount)} shares</span>
         </span>
       </div>
       <div className="mt-2">

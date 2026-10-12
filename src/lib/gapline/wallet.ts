@@ -1,5 +1,5 @@
 import { encodeFunctionData, decodeFunctionResult, type Address, type Hex } from "viem";
-import { smartActive, smartAddress, smartProvider, disconnectSmart, transferFromSmart } from "./smart-wallet";
+import { activateSavedWallet, describeSmartWallet, disconnectSmart, smartActive, smartAddress, smartProvider, transferFromSmart } from "./smart-wallet";
 
 const BSC = "0x38";
 const KYBER_ROUTER = "0x6131b5fae19ea4f9d964eac0408e4408b66337b5";
@@ -718,6 +718,8 @@ export async function buyStock(input: { address: string; symbol: string; sizeUsd
   await ensureAllowance(spend.token, input.address, tx.to, spend.amount);
   const hash = await send(input.address, tx.to, tx.data);
   await wait(hash);
+  cashMemory.delete(input.address.toLowerCase());
+  await readAssets(input.address, undefined, true).catch(() => undefined);
   return { hash, qty: fromUnit(tx.amountOut) };
 }
 
@@ -763,6 +765,7 @@ export async function sellStock(input: { address: string; symbol: string; qty: n
         await ensureAllowance(tokenIn, input.address, tx.to, tryAmount);
         hash = await send(input.address, tx.to, tx.data);
         await wait(hash);
+        await syncAfterSend(input.address, tokenIn, fromUnit(tryAmount));
         return { hash, usdc: fromUnit(tx.amountOut), venue: offer.name, partial: tryAmount * 100n < amount * 90n };
       } catch (error) {
         reason = error instanceof Error ? error.message : reason;
@@ -916,6 +919,9 @@ function storeAssets(key: string, assets: HeldAsset[], done = true) {
     : [...assets, ...(previous?.assets.filter((asset) => asset.side === "stock" && !assets.some((item) => item.symbol === asset.symbol)) ?? [])];
   assetCache.set(key, { at: done ? Date.now() : (previous?.at ?? 0), assets: next });
   assetListeners.get(key)?.forEach((listener) => listener(next));
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("gapline:assets", { detail: { address: key, assets: next } }));
+  }
   if (!done || typeof sessionStorage === "undefined") return;
   try {
     const parsed = JSON.parse(sessionStorage.getItem("gapline.assets.v1") ?? "{}") as Record<string, HeldAsset[]>;
@@ -1017,9 +1023,10 @@ async function loadPrices(): Promise<Px | null> {
   }
 }
 
-function priced(amount: number, px: number, previous: number | null | undefined) {
+function priced(amount: number, px: number, old?: HeldAsset) {
   if (px > 0) return amount * px;
-  return previous ?? null;
+  if (old?.usd != null && old.amount > 0) return old.usd * (amount / old.amount);
+  return null;
 }
 
 export async function refreshCrypto(address: string) {
@@ -1027,8 +1034,11 @@ export async function refreshCrypto(address: string) {
   const previous = lastCrypto.get(key) ?? assetCache.get(key)?.assets.filter((asset) => asset.side === "crypto") ?? [];
   const [native, marks, ...balances] = await Promise.all([nativeBalance(address), loadPrices(), ...MAJORS.map((token) => readToken(token.address, address))]);
   const next: HeldAsset[] = [];
-  const bnbAmount = native == null ? (previous.find((asset) => asset.symbol === "BNB")?.amount ?? null) : fromUnit(native);
-  if (bnbAmount != null && bnbAmount > 0.0001) {
+  const bnbAmount = native == null ? null : fromUnit(native);
+  if (native == null) {
+    const old = previous.find((asset) => asset.symbol === "BNB");
+    if (old && old.amount > 0.0001) next.push(old);
+  } else if (bnbAmount != null && bnbAmount > 0.0001) {
     const old = previous.find((asset) => asset.symbol === "BNB");
     next.push({
       symbol: "BNB",
@@ -1036,13 +1046,18 @@ export async function refreshCrypto(address: string) {
       amount: bnbAmount,
       side: "crypto",
       logo: "/marks/BNB.png",
-      usd: priced(bnbAmount, marks?.BNB ?? 0, old?.usd),
+      usd: priced(bnbAmount, marks?.BNB ?? 0, old),
     });
   }
   MAJORS.forEach((token, index) => {
     const raw = balances[index] ?? null;
-    const amount = raw == null ? (previous.find((asset) => asset.symbol === token.symbol)?.amount ?? null) : fromUnit(raw);
-    if (amount == null || amount <= 0.00000001) return;
+    if (raw == null) {
+      const old = previous.find((asset) => asset.symbol === token.symbol);
+      if (old && old.amount > 0.00000001) next.push(old);
+      return;
+    }
+    const amount = fromUnit(raw);
+    if (amount <= 0.00000001) return;
     const old = previous.find((asset) => asset.symbol === token.symbol);
     const mark = token.peg === "usd" ? 1 : token.px ? (marks?.[token.px] ?? 0) : 0;
     next.push({
@@ -1051,10 +1066,10 @@ export async function refreshCrypto(address: string) {
       amount,
       side: "crypto",
       logo: token.logo,
-      usd: priced(amount, mark, old?.usd),
+      usd: priced(amount, mark, old),
+      token: token.address,
     });
   });
-  if (!next.length && previous.length) return previous;
   lastCrypto.set(key, next);
   const stocks = assetCache.get(key)?.assets.filter((asset) => asset.side === "stock") ?? [];
   storeAssets(key, [...next, ...stocks]);
@@ -1125,29 +1140,100 @@ export async function readAssets(address: string, onPartial?: (assets: HeldAsset
   return job;
 }
 
+function toUnits(amount: number) {
+  if (!(amount > 0) || !Number.isFinite(amount)) return 0n;
+  const [whole, frac = ""] = amount.toFixed(18).split(".");
+  return BigInt((whole + frac).replace(/^0+(?=\d)/, "") || "0");
+}
+
+async function spendUnits(token: string | null, owner: string, amount: number) {
+  const requested = toUnits(amount);
+  if (requested <= 0n) throw new Error("Enter an amount.");
+  const raw = token ? await readToken(token, owner) : await nativeBalance(owner);
+  if (raw == null) return requested;
+  if (requested > raw) {
+    const over = requested - raw;
+    if (over > raw / 1000n + 1000n) throw new Error("That amount is more than this wallet holds. Nothing was sent.");
+    return raw;
+  }
+  return requested;
+}
+
+function holdsToken(asset: HeldAsset, token: string | null) {
+  if (!token) return asset.symbol === "BNB";
+  if (asset.token?.toLowerCase() === token.toLowerCase()) return true;
+  const major = MAJORS.find((item) => item.address.toLowerCase() === token.toLowerCase());
+  if (major) return asset.symbol === major.symbol;
+  const symbol = Object.entries({ ...XSTOCK, ...EXTRA }).find(([, address]) => address.toLowerCase() === token.toLowerCase())?.[0];
+  return Boolean(symbol && asset.symbol === symbol);
+}
+
+function applySpend(address: string, token: string | null, amount: number) {
+  const key = address.toLowerCase();
+  const row = assetCache.get(key);
+  if (!row || !(amount > 0)) return;
+  const assets = row.assets.flatMap((asset) => {
+    if (!holdsToken(asset, token)) return [asset];
+    const nextAmount = Math.max(0, asset.amount - amount);
+    if (nextAmount <= 0.00000001) return [];
+    const usd = asset.usd != null && asset.amount > 0 ? (asset.usd * nextAmount) / asset.amount : asset.usd;
+    return [{ ...asset, amount: nextAmount, usd }];
+  });
+  lastCrypto.set(key, assets.filter((asset) => asset.side === "crypto"));
+  storeAssets(key, assets);
+}
+
+async function syncAfterSend(address: string, token: string | null, amount: number) {
+  const before = peekAssets(address)?.find((asset) => holdsToken(asset, token))?.amount;
+  const target = before == null ? null : Math.max(0, before - amount);
+  cashMemory.delete(address.toLowerCase());
+  applySpend(address, token, amount);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await readAssets(address, undefined, true).catch(() => undefined);
+    if (target == null) return;
+    const now = peekAssets(address)?.find((asset) => holdsToken(asset, token))?.amount ?? 0;
+    if (now <= target + Math.max(0.000001, target * 0.02)) return;
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  }
+}
+
 export async function sendAsset(input: { from: string; token: string | null; to: string; amount: number }) {
   const to = input.to.trim();
   if (!/^0x[a-fA-F0-9]{40}$/.test(to)) throw new Error("Enter the address you want to send to.");
   if (!(input.amount > 0)) throw new Error("Enter an amount.");
-  if (smartAddress()?.toLowerCase() === input.from.toLowerCase()) {
-    return transferFromSmart({ token: input.token, to, amount: input.amount });
+  const x = describeSmartWallet(input.from)?.kind === "x" || smartAddress()?.toLowerCase() === input.from.toLowerCase();
+  if (x) {
+    const open = smartAddress()?.toLowerCase() === input.from.toLowerCase() || (await activateSavedWallet(input.from));
+    if (!open || smartAddress()?.toLowerCase() !== input.from.toLowerCase()) {
+      throw new Error("Sign in with X again so this wallet can send.");
+    }
+    const units = await spendUnits(input.token, input.from, input.amount);
+    const hash = await transferFromSmart({ token: input.token, to, units });
+    await wait(hash);
+    await syncAfterSend(input.from, input.token, input.amount);
+    return hash;
   }
   await ensureBsc(input.from);
-  const units = BigInt(Math.round(input.amount * 1e8)) * 10n ** 10n;
-  if (units <= 0n) throw new Error("Enter an amount.");
+  const units = await spendUnits(input.token, input.from, input.amount);
   if (!input.token) {
     const eth = await signer(input.from);
     try {
-      return (await eth.request({
+      const hash = (await eth.request({
         method: "eth_sendTransaction",
         params: [{ from: input.from, to, value: `0x${units.toString(16)}` }],
       })) as string;
+      await wait(hash);
+      await syncAfterSend(input.from, null, input.amount);
+      return hash;
     } catch (error) {
       throw new Error(explain(error, "The wallet did not send. Nothing was confirmed."));
     }
   }
   const data = `0xa9059cbb${pad(to)}${units.toString(16).padStart(64, "0")}`;
-  return send(input.from, input.token, data);
+  const hash = await send(input.from, input.token, data);
+  await wait(hash);
+  await syncAfterSend(input.from, input.token, input.amount);
+  return hash;
 }
 
 export async function disconnectWallet() {

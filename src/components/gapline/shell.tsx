@@ -1,6 +1,6 @@
 import { DeskProvider, useDesk, type ViewId } from "@/lib/gapline/store";
 import { formatUsd } from "@/lib/gapline/model";
-import { invalidateAssets, peekAssets, readAssets, readCash, refreshCrypto, rememberStocks, sendAsset, shortAddress, silentAccount, watchAccounts, type HeldAsset } from "@/lib/gapline/wallet";
+import { invalidateAssets, peekAssets, readAssets, readCash, rememberStocks, sendAsset, shortAddress, silentAccount, watchAccounts, type HeldAsset } from "@/lib/gapline/wallet";
 import { activateSavedWallet, describeSmartWallet, disconnectSmart, finishSmartWalletWithX, resumeSmartWallet, xWalletError } from "@/lib/gapline/smart-wallet";
 import { disconnectLinked, isDismissed, markForName, pinSavedProvider, readActive, readLinked, rememberLinked, setActive, undismissWallet, type LinkedWallet } from "@/lib/gapline/wallet-book";
 import { ConnectModal } from "./connect-modal";
@@ -38,9 +38,10 @@ export function GaplineApp({ initialView, initialSymbol }: { initialView?: ViewI
 }
 
 function assetWorth(asset: HeldAsset, books: { symbol: string; venues: { xstocks: { price: number } }; reference: number | null }[]) {
-  if (asset.usd != null && asset.usd > 0) return asset.usd;
   const book = books.find((item) => item.symbol === asset.symbol);
   const price = book?.venues.xstocks.price || book?.reference || 0;
+  if (asset.side === "stock") return price > 0 ? price * asset.amount : 0;
+  if (asset.usd != null && asset.usd >= 0) return asset.usd;
   return price > 0 ? price * asset.amount : 0;
 }
 
@@ -260,18 +261,21 @@ function Shell() {
     };
   }, [state.address]);
   useEffect(() => {
+    const onAssets = (event: Event) => {
+      const detail = (event as CustomEvent<{ address: string; assets: HeldAsset[] }>).detail;
+      if (!state.address || !detail || detail.address !== state.address.toLowerCase()) return;
+      setHeldAssets(detail.assets);
+    };
+    window.addEventListener("gapline:assets", onAssets);
+    return () => window.removeEventListener("gapline:assets", onAssets);
+  }, [state.address]);
+  useEffect(() => {
     if (!state.address) return;
     let stop = false;
     const tick = () => {
-      refreshCrypto(state.address as string)
-        .then((assets) => {
-          if (!stop && assets?.length) setHeldAssets((current) => {
-            const stocks = current.filter((asset) => asset.side === "stock");
-            const symbols = new Set(assets.map((asset) => asset.symbol));
-            return [...assets, ...stocks.filter((asset) => !symbols.has(asset.symbol))];
-          });
-        })
-        .catch(() => undefined);
+      readAssets(state.address as string, (assets) => {
+        if (!stop) setHeldAssets(assets);
+      }, true).catch(() => undefined);
       readCash(state.address as string)
         .then((cash) => {
           if (stop || readActive()?.toLowerCase() !== state.address?.toLowerCase()) return;
@@ -279,7 +283,7 @@ function Shell() {
         })
         .catch(() => undefined);
     };
-    const timer = window.setInterval(tick, 12_000);
+    const timer = window.setInterval(tick, 8_000);
     return () => {
       stop = true;
       window.clearInterval(timer);
