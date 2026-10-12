@@ -145,6 +145,20 @@ export async function readCash(address: string) {
   return fromUnit(next.usdc + next.usdt);
 }
 
+function reasonFrom(message: string) {
+  if (/insufficient funds|not enough funds|insufficient balance for transfer/i.test(message)) {
+    return "There wasn't enough gas. This wallet needs more BNB for the network fee.";
+  }
+  if (/out of gas|gas required exceeds|intrinsic gas too low|exceeds block gas limit/i.test(message)) {
+    return "There wasn't enough gas. Add a little BNB and try again.";
+  }
+  const following = message.match(/following reason:\s*([^\n]+)/i);
+  if (following?.[1]) return following[1].trim();
+  const reverted = message.match(/execution reverted:?\s*(.+)/i);
+  if (reverted?.[1] && !/^0x/i.test(reverted[1].trim())) return reverted[1].trim();
+  return "";
+}
+
 function explain(error: unknown, fallback: string) {
   const code = typeof error === "object" && error && "code" in error ? Number((error as { code: number }).code) : 0;
   if (code === 4001) return "You closed the wallet. Nothing was sent.";
@@ -155,9 +169,10 @@ function explain(error: unknown, fallback: string) {
       : typeof error === "object" && error && "message" in error
         ? String((error as { message: unknown }).message)
         : "";
-  if (/insufficient funds/i.test(message)) return "This wallet needs a little BNB for the network fee. Nothing was sent.";
   if (/user rejected|user denied/i.test(message)) return "You closed the wallet. Nothing was sent.";
   if (/chain/i.test(message) && /mismatch|wrong|switch/i.test(message)) return "Switch the wallet to BNB Chain. Nothing was sent.";
+  const reason = reasonFrom(message);
+  if (reason) return reason;
   if (message && !/rpc|json-rpc|unknown reason/i.test(message)) return message;
   return fallback;
 }
@@ -277,7 +292,7 @@ function asRouter(to: string) {
   return to;
 }
 
-async function kyberOffer(tokenIn: string, tokenOut: string, amountIn: bigint): Promise<Offer | null> {
+async function kyberOffer(tokenIn: string, tokenOut: string, amountIn: bigint, slippage = 100): Promise<Offer | null> {
   const route = await quote(tokenIn, tokenOut, amountIn);
   const amountOut = BigInt(route.amountOut ?? "0");
   if (amountOut <= 0n) return null;
@@ -287,18 +302,18 @@ async function kyberOffer(tokenIn: string, tokenOut: string, amountIn: bigint): 
     vendorUsd: Number(route.amountOutUsd ?? 0),
     tokenIn,
     build: async (sender) => {
-      const tx = await build(route, sender);
+      const tx = await build(route, sender, slippage);
       return { to: asRouter(tx.to), data: tx.data, amountOut: tx.amountOut };
     },
   };
 }
 
-async function sushiOffer(tokenIn: string, tokenOut: string, amountIn: bigint): Promise<Offer | null> {
+async function sushiOffer(tokenIn: string, tokenOut: string, amountIn: bigint, slippage = 0.01): Promise<Offer | null> {
   const url = new URL("https://api.sushi.com/swap/v7/56");
   url.searchParams.set("tokenIn", tokenIn);
   url.searchParams.set("tokenOut", tokenOut);
   url.searchParams.set("amount", amountIn.toString());
-  url.searchParams.set("maxSlippage", "0.01");
+  url.searchParams.set("maxSlippage", String(slippage));
   url.searchParams.set("sender", "0x1111111111111111111111111111111111111111");
   const res = await fetch(url, { headers: { accept: "application/json" } });
   if (!res.ok) return null;
@@ -317,7 +332,7 @@ async function sushiOffer(tokenIn: string, tokenOut: string, amountIn: bigint): 
       built.searchParams.set("tokenIn", tokenIn);
       built.searchParams.set("tokenOut", tokenOut);
       built.searchParams.set("amount", amountIn.toString());
-      built.searchParams.set("maxSlippage", "0.01");
+      built.searchParams.set("maxSlippage", String(slippage));
       built.searchParams.set("sender", sender);
       built.searchParams.set("recipient", sender);
       const next = await fetch(built, { headers: { accept: "application/json" } });
@@ -368,7 +383,7 @@ async function lifiOffer(tokenIn: string, tokenOut: string, amountIn: bigint): P
   };
 }
 
-async function paraOffer(tokenIn: string, tokenOut: string, amountIn: bigint): Promise<Offer | null> {
+async function paraOffer(tokenIn: string, tokenOut: string, amountIn: bigint, slippage = 100): Promise<Offer | null> {
   const url = new URL("https://api.paraswap.io/prices");
   url.searchParams.set("srcToken", tokenIn);
   url.searchParams.set("destToken", tokenOut);
@@ -397,7 +412,7 @@ async function paraOffer(tokenIn: string, tokenOut: string, amountIn: bigint): P
           srcAmount: amountIn.toString(),
           priceRoute: route,
           userAddress: sender,
-          slippage: 100,
+          slippage,
         }),
       });
       if (!next.ok) throw new Error("ParaSwap could not build this swap. Nothing was sent.");
@@ -408,12 +423,73 @@ async function paraOffer(tokenIn: string, tokenOut: string, amountIn: bigint): P
   };
 }
 
+const PANCAKE_ROUTER = "0x10ED43C718714eb63d5aA57B78B54704E256024E";
+const amountsAbi = [
+  {
+    type: "function",
+    name: "getAmountsOut",
+    stateMutability: "view",
+    inputs: [
+      { name: "amountIn", type: "uint256" },
+      { name: "path", type: "address[]" },
+    ],
+    outputs: [{ name: "amounts", type: "uint256[]" }],
+  },
+] as const;
+const swapAbi = [
+  {
+    type: "function",
+    name: "swapExactTokensForTokens",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "amountIn", type: "uint256" },
+      { name: "amountOutMin", type: "uint256" },
+      { name: "path", type: "address[]" },
+      { name: "to", type: "address" },
+      { name: "deadline", type: "uint256" },
+    ],
+    outputs: [{ name: "amounts", type: "uint256[]" }],
+  },
+] as const;
+
+async function pancakeOffer(tokenIn: string, tokenOut: string, amountIn: bigint): Promise<Offer | null> {
+  try {
+    const quoted = encodeFunctionData({
+      abi: amountsAbi,
+      functionName: "getAmountsOut",
+      args: [amountIn, [tokenIn as Address, tokenOut as Address]],
+    });
+    const result = await rpcCall(PANCAKE_ROUTER, quoted);
+    const amounts = decodeFunctionResult({ abi: amountsAbi, functionName: "getAmountsOut", data: result as Hex });
+    const amountOut = amounts[amounts.length - 1] ?? 0n;
+    if (amountOut <= 0n) return null;
+    return {
+      name: "PancakeSwap",
+      amountOut,
+      vendorUsd: 0,
+      tokenIn,
+      build: async (sender) => ({
+        to: PANCAKE_ROUTER,
+        data: encodeFunctionData({
+          abi: swapAbi,
+          functionName: "swapExactTokensForTokens",
+          args: [amountIn, (amountOut * 50n) / 100n, [tokenIn as Address, tokenOut as Address], sender as Address, BigInt(Math.floor(Date.now() / 1000) + 20 * 60)],
+        }),
+        amountOut,
+      }),
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function offersFor(tokenIn: string, tokenOut: string, amountIn: bigint) {
   const found = await Promise.all([
     kyberOffer(tokenIn, tokenOut, amountIn).catch(() => null),
     sushiOffer(tokenIn, tokenOut, amountIn).catch(() => null),
     lifiOffer(tokenIn, tokenOut, amountIn).catch(() => null),
     paraOffer(tokenIn, tokenOut, amountIn).catch(() => null),
+    pancakeOffer(tokenIn, tokenOut, amountIn).catch(() => null),
   ]);
   return found.filter((offer): offer is Offer => offer != null);
 }
@@ -454,11 +530,11 @@ export function thinPoolReason(symbol: string, sizeUsd: number, receivedUsd: num
   return `A ${money(sizeUsd)} buy of ${symbol} would only come back as about ${money(receivedUsd)}.${where} Every route was priced. None of them returns the worth of this amount, so nothing was sent.`;
 }
 
-async function build(routeSummary: unknown, sender: string) {
+async function build(routeSummary: unknown, sender: string, slippage = 100) {
   const res = await fetch("https://aggregator-api.kyberswap.com/bsc/api/v1/route/build", {
     method: "POST",
     headers: { "content-type": "application/json", "x-client-id": "gapline" },
-    body: JSON.stringify({ routeSummary, sender, recipient: sender, slippageTolerance: 100 }),
+    body: JSON.stringify({ routeSummary, sender, recipient: sender, slippageTolerance: slippage }),
   });
   if (!res.ok) throw new Error("The swap could not be built. Nothing was sent.");
   const body = (await res.json()) as {
@@ -471,28 +547,119 @@ async function build(routeSummary: unknown, sender: string) {
 }
 
 async function send(from: string, to: string, data: string) {
+  const gas = await paddedGas(from, to, data);
   const eth = await signer(from);
   try {
     return (await eth.request({
       method: "eth_sendTransaction",
-      params: [{ from, to, data, value: "0x0" }],
+      params: [{ from, to, data, value: "0x0", gas, gasLimit: gas }],
     })) as string;
   } catch (error) {
     throw new Error(explain(error, "The wallet did not send. Nothing was confirmed."));
   }
 }
 
+async function paddedGas(from: string, to: string, data: string) {
+  try {
+    const hex = await Promise.any(
+      RPCS.map(async (rpc) => {
+        const res = await fetch(rpc, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_estimateGas", params: [{ from, to, data, value: "0x0" }] }),
+          signal: AbortSignal.timeout(4000),
+        });
+        const body = (await res.json()) as { result?: string; error?: { message?: string; data?: string } };
+        if (!body.result) {
+          const decoded = decodeRevert(body.error?.data);
+          throw new Error(decoded || body.error?.message || "execution reverted");
+        }
+        return body.result;
+      }),
+    );
+    return "0x" + ((BigInt(hex) * 3n) / 2n + 40_000n).toString(16);
+  } catch (error) {
+    const messages =
+      error instanceof AggregateError
+        ? error.errors.map((item) => (item instanceof Error ? item.message : String(item)))
+        : [error instanceof Error ? error.message : ""];
+    const text = messages.filter(Boolean).join(" ");
+    throw new Error(reasonFrom(text) || text || "This swap would be rejected on BNB Chain. Nothing was sent.");
+  }
+}
+
+function decodeRevert(data?: string) {
+  if (!data || !data.startsWith("0x") || data.length < 10) return "";
+  const hex = data.slice(2);
+  if (hex.startsWith("08c379a0") && hex.length >= 8 + 128) {
+    const length = Number(BigInt(`0x${hex.slice(8 + 64, 8 + 128)}`));
+    if (length > 0 && hex.length >= 8 + 128 + length * 2) {
+      const bytes = new Uint8Array(length);
+      for (let i = 0; i < length; i += 1) bytes[i] = Number.parseInt(hex.slice(8 + 128 + i * 2, 8 + 128 + i * 2 + 2), 16);
+      const text = new TextDecoder().decode(bytes).replace(/\0/g, "").trim();
+      if (text) return text;
+    }
+  }
+  if (hex.startsWith("4e487b71") && hex.length >= 8 + 64) {
+    return `The contract panicked (${Number(BigInt(`0x${hex.slice(8, 8 + 64)}`))}).`;
+  }
+  return "";
+}
+
+async function rpc(method: string, params: unknown[]) {
+  for (const url of RPCS) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: AbortSignal.timeout(4000),
+      });
+      const body = (await res.json()) as { result?: unknown; error?: { message?: string; data?: string } };
+      if (body.result !== undefined || body.error) return body;
+    } catch {
+      /* Try the next public node. */
+    }
+  }
+  return null;
+}
+
+async function failureReason(hash: string, receipt: { gasUsed?: string; blockNumber?: string }) {
+  const txBody = await rpc("eth_getTransactionByHash", [hash]);
+  const tx = txBody?.result as { from?: string; to?: string; input?: string; gas?: string; value?: string } | null;
+  if (receipt.gasUsed && tx?.gas) {
+    try {
+      const used = BigInt(receipt.gasUsed);
+      const limit = BigInt(tx.gas);
+      if (limit > 0n && used * 100n >= limit * 99n) return "There wasn't enough gas. Add a little BNB and try again.";
+    } catch {
+      /* The gas fields were not numbers. Fall through to the revert text. */
+    }
+  }
+  if (tx?.from && tx.to && tx.input && receipt.blockNumber) {
+    const block = BigInt(receipt.blockNumber);
+    const parent = block > 0n ? `0x${(block - 1n).toString(16)}` : "latest";
+    const call = await rpc("eth_call", [{ from: tx.from, to: tx.to, data: tx.input, value: tx.value ?? "0x0" }, parent]);
+    const decoded = decodeRevert(call?.error?.data);
+    if (decoded) return decoded;
+    const fromNode = reasonFrom(call?.error?.message ?? "");
+    if (fromNode) return fromNode;
+    if (call?.error?.message) return call.error.message;
+  }
+  return "The transaction was rejected on BNB Chain. The node did not say why.";
+}
+
 async function wait(hash: string) {
   for (let i = 0; i < 30; i += 1) {
-    let receipt: { status?: string } | null = null;
-    for (const rpc of RPCS) {
+    let receipt: { status?: string; gasUsed?: string; blockNumber?: string } | null = null;
+    for (const url of RPCS) {
       try {
-        const res = await fetch(rpc, {
+        const res = await fetch(url, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getTransactionReceipt", params: [hash] }),
         });
-        const body = (await res.json()) as { result?: { status?: string } | null };
+        const body = (await res.json()) as { result?: { status?: string; gasUsed?: string; blockNumber?: string } | null };
         if (body.result) {
           receipt = body.result;
           break;
@@ -502,7 +669,7 @@ async function wait(hash: string) {
       }
     }
     if (receipt?.status) {
-      if (receipt.status === "0x0") throw new Error("The transaction failed on BNB Chain. Nothing was added.");
+      if (receipt.status === "0x0" || receipt.status === "0x00") throw new Error(await failureReason(hash, receipt));
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -554,27 +721,56 @@ export async function buyStock(input: { address: string; symbol: string; sizeUsd
   return { hash, qty: fromUnit(tx.amountOut) };
 }
 
-export async function sellStock(input: { address: string; symbol: string; qty: number; all?: boolean }) {
+export async function sellStock(input: { address: string; symbol: string; qty: number; all?: boolean; token?: string }) {
   if (!(input.qty > 0)) throw new Error("Type how much you want to sell. Nothing was sent.");
-  const tokenIn = stockToken(input.symbol);
+  const tokenIn = input.token ?? stockToken(input.symbol);
   if (!tokenIn) throw new Error("This name has no xStock on BNB Chain. Nothing was sent.");
   await ensureBsc(input.address);
   const raw = await readToken(tokenIn, input.address);
   if (raw == null) throw new Error("The share balance did not come back. Nothing was sent.");
   if (raw <= 0n) throw new Error("This wallet does not hold that stock. Nothing was sent.");
   const requested = BigInt(Math.round(input.qty * 1e6)) * 10n ** 12n;
-  const amount = input.all || requested > raw ? raw : requested;
+  const amount = input.all || requested <= 0n || requested > raw ? raw : requested;
   if (amount <= 0n) throw new Error("Type how much you want to sell. Nothing was sent.");
-  const lists = await Promise.all([offersFor(tokenIn, USDC, amount), offersFor(tokenIn, USDT, amount)]);
-  const offers = lists.flat().sort((left, right) => (left.amountOut === right.amountOut ? right.vendorUsd - left.vendorUsd : left.amountOut > right.amountOut ? -1 : 1));
-  const offer = offers[0];
-  if (!offer) throw new Error("No pool could buy these shares. Nothing was sent.");
-  const tx = await offer.build(input.address);
-  if (tx.amountOut <= 0n) throw new Error("The pool returned no USDC or USDT. Nothing was sent.");
-  await ensureAllowance(tokenIn, input.address, tx.to, amount);
-  const hash = await send(input.address, tx.to, tx.data);
-  await wait(hash);
-  return { hash, usdc: fromUnit(tx.amountOut), venue: offer.name };
+  const steps = [amount];
+  let smaller = amount;
+  for (let step = 0; step < 3; step += 1) {
+    smaller /= 2n;
+    if (smaller <= 0n || smaller * 20n < amount) break;
+    steps.push(smaller);
+  }
+  let reason = "The pool rejected the sale. It cannot take this many shares, so nothing was sent.";
+  for (const tryAmount of steps) {
+    const found = await Promise.all([
+      kyberOffer(tokenIn, USDC, tryAmount, 5000).catch(() => null),
+      kyberOffer(tokenIn, USDT, tryAmount, 5000).catch(() => null),
+      sushiOffer(tokenIn, USDC, tryAmount, 0.5).catch(() => null),
+      sushiOffer(tokenIn, USDT, tryAmount, 0.5).catch(() => null),
+      lifiOffer(tokenIn, USDC, tryAmount).catch(() => null),
+      lifiOffer(tokenIn, USDT, tryAmount).catch(() => null),
+      paraOffer(tokenIn, USDC, tryAmount, 5000).catch(() => null),
+      paraOffer(tokenIn, USDT, tryAmount, 5000).catch(() => null),
+      pancakeOffer(tokenIn, USDC, tryAmount).catch(() => null),
+      pancakeOffer(tokenIn, USDT, tryAmount).catch(() => null),
+    ]);
+    const offers = found.filter((offer): offer is Offer => offer != null);
+    offers.sort((left, right) => (left.amountOut === right.amountOut ? right.vendorUsd - left.vendorUsd : left.amountOut > right.amountOut ? -1 : 1));
+    for (const offer of offers) {
+      let hash = "";
+      try {
+        const tx = await offer.build(input.address);
+        if (tx.amountOut <= 0n) continue;
+        await ensureAllowance(tokenIn, input.address, tx.to, tryAmount);
+        hash = await send(input.address, tx.to, tx.data);
+        await wait(hash);
+        return { hash, usdc: fromUnit(tx.amountOut), venue: offer.name, partial: tryAmount * 100n < amount * 90n };
+      } catch (error) {
+        reason = error instanceof Error ? error.message : reason;
+        if (hash || /closed the wallet|did not switch|could not be added|needs a little BNB/i.test(reason)) throw new Error(reason);
+      }
+    }
+  }
+  throw new Error(reason);
 }
 
 const STOCKS: { symbol: string; name: string; address: string; logo: string }[] = [
@@ -694,7 +890,7 @@ async function rpcCall(to: string, data: string) {
   }
 }
 
-export type HeldAsset = { symbol: string; name: string; amount: number; side: "crypto" | "stock"; logo?: string; usd: number | null };
+export type HeldAsset = { symbol: string; name: string; amount: number; side: "crypto" | "stock"; logo?: string; usd: number | null; token?: string };
 
 const assetCache = new Map<string, { at: number; assets: HeldAsset[] }>();
 const assetFlight = new Map<string, Promise<HeldAsset[]>>();
@@ -898,7 +1094,7 @@ async function loadAssets(address: string) {
     chunk.forEach((token, index) => {
       const amount = fromUnit(balances[index] ?? 0n);
       if (amount <= 0.00000001) return;
-      pushHeld(held, { symbol: token.symbol, name: token.name, amount, side: "stock", logo: token.logo, usd: null });
+      pushHeld(held, { symbol: token.symbol, name: token.name, amount, side: "stock", logo: token.logo, usd: null, token: token.address });
     });
   });
   storeAssets(key, held.slice());

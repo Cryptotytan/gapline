@@ -209,8 +209,13 @@ export async function transferFromSmart(input: { token: string | null; to: strin
     return await wallet.sendTransaction({ to: input.token as Address, data });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    if (/insufficient funds/i.test(message)) throw new Error("This wallet needs a little BNB for the network fee. Nothing was sent.");
-    throw new Error("The send did not go through. Nothing was confirmed.");
+    if (/insufficient funds|out of gas|gas required exceeds/i.test(message)) {
+      throw new Error("There wasn't enough gas. This wallet needs more BNB for the network fee.");
+    }
+    const following = message.match(/following reason:\s*([^\n]+)/i);
+    const reverted = message.match(/execution reverted:?\s*(.+)/i);
+    const reason = following?.[1]?.trim() || (reverted?.[1] && !/^0x/i.test(reverted[1].trim()) ? reverted[1].trim() : "");
+    throw new Error(reason || message.replace(/^Error:\s*/, "").slice(0, 220) || "The send did not go through. Nothing was confirmed.");
   }
 }
 
@@ -326,16 +331,20 @@ export function smartProvider(): Provider | null {
         }
       }
       if (method === "eth_sendTransaction") {
-        const tx = (params?.[0] ?? {}) as { to?: Address; data?: Hex };
+        const tx = (params?.[0] ?? {}) as { to?: Address; data?: Hex; gas?: string; gasLimit?: string };
         if (!tx.to || !tx.data) throw new Error("The wallet did not send. Nothing was confirmed.");
+        const gas = tx.gas ?? tx.gasLimit;
         try {
-          return await wallet.sendTransaction({ to: tx.to, data: tx.data, value: 0n });
+          return await wallet.sendTransaction({ to: tx.to, data: tx.data, value: 0n, ...(gas ? { gas: BigInt(gas) } : {}) });
         } catch (error) {
           const message = error instanceof Error ? error.message : "";
-          if (/insufficient funds/i.test(message)) {
-            throw new Error("This wallet needs a little BNB for the network fee. Nothing was sent.");
+          if (/insufficient funds|out of gas|gas required exceeds/i.test(message)) {
+            throw new Error("There wasn't enough gas. This wallet needs more BNB for the network fee.");
           }
-          throw new Error("The wallet did not send. Nothing was confirmed.");
+          const following = message.match(/following reason:\s*([^\n]+)/i);
+          const reverted = message.match(/execution reverted:?\s*(.+)/i);
+          const reason = following?.[1]?.trim() || (reverted?.[1] && !/^0x/i.test(reverted[1].trim()) ? reverted[1].trim() : message.replace(/^Error:\s*/, "").slice(0, 220));
+          throw new Error(reason || "The wallet did not send. Nothing was confirmed.");
         }
       }
       throw new Error("The wallet did not send. Nothing was confirmed.");

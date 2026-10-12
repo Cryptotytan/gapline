@@ -53,8 +53,11 @@ export function HoldingsView() {
   }
   const byValue = (left: HeldAsset, right: HeldAsset) => valueOf(right) - valueOf(left);
   const crypto = assets.filter((asset) => asset.side === "crypto").sort(byValue);
-  const stocks = assets.filter((asset) => asset.side === "stock" && asset.amount > 0.00000001).sort(byValue);
+  const stocks = assets.filter((asset) => asset.side === "stock" && valueOf(asset) >= 0.01).sort(byValue);
   const showing = side === "crypto" ? crypto : stocks;
+  const cryptoValue = crypto.reduce((sum, asset) => sum + Math.max(0, valueOf(asset)), 0);
+  const stockValue = stocks.reduce((sum, asset) => sum + valueOf(asset), 0);
+  const total = assets.length ? cryptoValue + stockValue : Math.max(0, state.cash);
 
   function remember(next: HeldAsset[], nextSide = side) {
     if (!state.address) return;
@@ -124,9 +127,9 @@ export function HoldingsView() {
             </span>
           </div>
         ) : null}
-        <p className="mt-4 text-[11px] tracking-[0.16em] text-muted uppercase">Ready to spend</p>
-        <p className="mt-1 font-display text-3xl tabular-nums text-fg sm:text-4xl">{state.address ? formatUsd(state.cash >= 0.05 ? state.cash : 0) : "—"}</p>
-        <p className="mt-1 text-xs text-muted">USDC and USDT on BNB Chain</p>
+        <p className="mt-4 text-[11px] tracking-[0.16em] text-muted uppercase">Total balance</p>
+        <p className="mt-1 font-display text-3xl tabular-nums text-fg sm:text-4xl">{state.address ? formatUsd(total) : "—"}</p>
+        <p className="mt-1 text-xs text-muted">{state.address ? `Crypto ${formatUsd(cryptoValue)} · Stocks ${formatUsd(stockValue)}` : "Crypto and stocks"}</p>
         {!state.address && <p className="mt-3 text-sm text-pretty text-muted">Connect a wallet to see crypto and stocks.</p>}
         <div className="mt-5 grid gap-2">
           {state.address ? (
@@ -265,13 +268,15 @@ function StockRow({ asset, onDone }: { asset: HeldAsset; onDone: () => void }) {
     }
     setWhy("");
     setSending(true);
-    sellStock({ address: state.address, symbol: asset.symbol, qty: size, all })
+    sellStock({ address: state.address, symbol: asset.symbol, qty: size, all, token: asset.token })
       .then(async (sent) => {
         const cash = await readCash(state.address as string).catch(() => state.cash);
         dispatch({
           type: "note",
-          title: "Sold",
-          detail: `${asset.symbol} sold for about ${formatUsd(sent.usdc)} on ${sent.venue}. ${sent.hash}`,
+          title: sent.partial ? "Sold part" : "Sold",
+          detail: sent.partial
+            ? `The pool could not take the full sale. Part of ${asset.symbol} sold for about ${formatUsd(sent.usdc)} on ${sent.venue}. The rest is still in the wallet. ${sent.hash}`
+            : `${asset.symbol} sold for about ${formatUsd(sent.usdc)} on ${sent.venue}. ${sent.hash}`,
         });
         setOpen(false);
         setDraft("");
