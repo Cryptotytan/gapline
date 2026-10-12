@@ -3,7 +3,7 @@ import { VENUES, advise, classify, formatQty, formatUsd, listRoutes, quoteOrder,
 import { CallBadge, Mark, Panel, btnPrimary, field } from "./ui";
 import { GapChart } from "./desk";
 import { cardCheckout } from "./card-pay";
-import { buyStock, quoteFill, readCash, shortAddress, stockToken, thinPoolReason } from "@/lib/gapline/wallet";
+import { buyStock, fillIsThin, quoteFill, readCash, shortAddress, stockToken, thinPoolReason } from "@/lib/gapline/wallet";
 import { openWalletPicker, pinSavedProvider } from "@/lib/gapline/wallet-book";
 import { activateSavedWallet } from "@/lib/gapline/smart-wallet";
 import { useEffect, useState } from "react";
@@ -104,14 +104,12 @@ export function RouteView() {
   const q = query.trim().toLowerCase();
   const mark = b.venues.xstocks.price;
   const paid = fill?.paid ?? 0;
-  const poolReason =
-    fill && fill.spentUsd > 0 && fill.receivedUsd > 0 && (fill.impact ?? 1) > 0.15
-      ? thinPoolReason(b.symbol, quoteSize, fill.receivedUsd, fill.venue)
-      : "";
+  const thin = Boolean(fill && fillIsThin(fill.spentUsd, fill.receivedUsd, fill.impact ?? 1));
+  const poolReason = thin ? thinPoolReason(b.symbol, quoteSize, fill?.receivedUsd ?? 0, fill?.venue) : "";
   const impactPct = fill && fill.impact != null ? `${Math.round(fill.impact * 1000) / 10}%` : "";
   const fillLine = quoting
     ? "Comparing every route for the lowest fee."
-    : paid > 0 && fill?.venue && (fill.impact ?? 1) <= 0.15
+    : paid > 0 && fill?.venue && !thin
       ? `${fill.venue} keeps the most of this buy. You get about ${formatUsd(fill.receivedUsd)} back. Price impact ${impactPct}.`
       : paid > 0 && mark > 0
         ? `On-chain mark ${formatUsd(mark)}. This buy would pay ${formatUsd(paid)}${fill?.venue ? ` via ${fill.venue}` : ""}.`

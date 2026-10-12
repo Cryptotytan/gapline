@@ -291,6 +291,7 @@ function Shell() {
   }, [dispatch, state.address]);
   const worth = heldAssets.reduce((sum, asset) => {
     const value = assetWorth(asset, state.books);
+    if (asset.side === "stock") return value > 0 ? sum + value : sum;
     return value >= 0.05 ? sum + value : sum;
   }, 0);
   const [picker, setPicker] = useState(false);

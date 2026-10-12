@@ -10,7 +10,8 @@ import { XLogo } from "./ui";
 function amountLabel(amount: number) {
   if (amount >= 1000) return amount.toLocaleString(undefined, { maximumFractionDigits: 2 });
   if (amount >= 1) return amount.toLocaleString(undefined, { maximumFractionDigits: 4 });
-  return amount.toLocaleString(undefined, { maximumFractionDigits: 6 });
+  if (amount >= 0.0001) return amount.toLocaleString(undefined, { maximumFractionDigits: 6 });
+  return amount.toLocaleString(undefined, { maximumFractionDigits: 8 });
 }
 
 function AssetLogo({ asset }: { asset: HeldAsset }) {
@@ -54,7 +55,7 @@ export function HoldingsView() {
   }
   const byValue = (left: HeldAsset, right: HeldAsset) => valueOf(right) - valueOf(left);
   const crypto = assets.filter((asset) => asset.side === "crypto").sort(byValue);
-  const stocks = assets.filter((asset) => asset.side === "stock" && valueOf(asset) >= 0.01).sort(byValue);
+  const stocks = assets.filter((asset) => asset.side === "stock" && asset.amount > 0.00000001).sort(byValue);
   const showing = side === "crypto" ? crypto : stocks;
   const cryptoValue = crypto.reduce((sum, asset) => sum + Math.max(0, valueOf(asset)), 0);
   const stockValue = stocks.reduce((sum, asset) => sum + valueOf(asset), 0);

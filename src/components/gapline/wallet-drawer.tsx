@@ -171,7 +171,7 @@ export function WalletDrawer({
 
   if (!open) return null;
 
-  const shown = assets.filter((asset) => (asset.side === "stock" ? asset.amount >= 0.0001 : (asset.usd ?? asset.amount) >= 0.05));
+  const shown = assets.filter((asset) => (asset.side === "stock" ? asset.amount > 0.00000001 : (asset.usd ?? asset.amount) >= 0.05));
   const actions = [
     { id: "receive" as const, label: "Receive" },
     { id: "send" as const, label: "Send" },
@@ -264,7 +264,7 @@ export function WalletDrawer({
                   </span>
                   <span className="text-right">
                     <span className="block text-sm tabular-nums text-fg">{formatUsd(dollars(asset))}</span>
-                    <span className="block text-[11px] tabular-nums text-muted">{asset.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })} {asset.symbol}</span>
+                    <span className="block text-[11px] tabular-nums text-muted">{asset.amount.toLocaleString("en-US", { maximumFractionDigits: asset.amount < 0.0001 ? 8 : 4 })} {asset.symbol}</span>
                   </span>
                 </li>
               ))}

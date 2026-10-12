@@ -524,6 +524,12 @@ export async function quoteFill(input: { symbol: string; sizeUsd: number; token?
   return { paid: input.sizeUsd / qty, qty, receivedUsd: worth.value, spentUsd: input.sizeUsd, venue: offer.name, impact: worth.impact };
 }
 
+export function fillIsThin(spent: number, received: number, impact: number) {
+  if (!(spent > 0) || !(received > 0)) return true;
+  if (spent - received <= 0.05) return false;
+  return impact > 0.15;
+}
+
 export function thinPoolReason(symbol: string, sizeUsd: number, receivedUsd: number, venue?: string) {
   const money = (value: number) => value.toLocaleString("en-US", { style: "currency", currency: "USD" });
   const where = venue ? ` ${venue} was the least expensive of the routes.` : "";
@@ -710,7 +716,7 @@ export async function buyStock(input: { address: string; symbol: string; sizeUsd
   const offer = await bestOffer(tokenOut, spend.amount, input.sizeUsd, mark, spend.token);
   if (!offer) throw new Error("No pool could quote this order. Nothing was sent.");
   const worth = offerWorth(offer, mark, input.sizeUsd);
-  if (input.sizeUsd > 0 && worth.value > 0 && worth.impact > 0.15) {
+  if (input.sizeUsd > 0 && worth.value > 0 && fillIsThin(input.sizeUsd, worth.value, worth.impact)) {
     throw new Error(thinPoolReason(input.symbol, input.sizeUsd, worth.value, offer.name));
   }
   const tx = await offer.build(input.address);
@@ -1079,14 +1085,14 @@ export async function refreshCrypto(address: string) {
 async function loadAssets(address: string) {
   const key = address.toLowerCase();
   const seen = new Set<string>();
-  const stocks = Object.entries({ ...XSTOCK, ...EXTRA })
+  const stocks = [...Object.entries(XSTOCK), ...Object.entries(EXTRA)]
     .map(([symbol, token]) => {
       const known = STOCKS.find((item) => item.symbol === symbol);
       return { symbol, name: known?.name ?? symbol, address: token, logo: known?.logo };
     })
     .filter((token) => {
       const id = token.address.toLowerCase();
-      if (seen.has(id)) return false;
+      if (!id.startsWith("0x") || seen.has(id)) return false;
       seen.add(id);
       return true;
     });
