@@ -183,7 +183,7 @@ function Shell() {
       const kind = described?.kind ?? linkedRow?.kind;
       if (kind === "x" || created) {
         const address = created ?? (await resumeSmartWallet());
-        if (stop || !address || address.toLowerCase() !== chosen.toLowerCase()) {
+        if (stop || !address || address.toLowerCase() !== chosen.toLowerCase() || (isDismissed(address) && !created)) {
           if (!created) disconnectSmart();
           if (fromX || created) {
             dispatch({
@@ -194,7 +194,7 @@ function Shell() {
           }
           return;
         }
-        undismissWallet(address);
+        if (created) undismissWallet(address);
         setActive(address);
         const cash = await readCash(address).catch(() => 0);
         if (stop) return;
@@ -338,25 +338,34 @@ function Shell() {
     }
   }
   function disconnectOne(wallet: LinkedWallet) {
+    const showing = state.address?.toLowerCase() === wallet.address.toLowerCase();
+    if (showing) setActive(wallet.address);
     const result = disconnectLinked(wallet.address);
     setLinked(readLinked());
-    if (!result.changed) return;
+    if (wallet.kind === "x") disconnectSmart();
+    if (!result.changed && !showing) return;
     if (!result.active) {
       dismissed.current = true;
       setDrawer(false);
       disconnectSmart();
-      pinSavedProvider(wallet.address);
       dispatch({ type: "disconnect" });
       return;
     }
     const next = readLinked().find((item) => item.address.toLowerCase() === result.active?.toLowerCase());
-    if (!next) return;
+    if (!next) {
+      dismissed.current = true;
+      setDrawer(false);
+      dispatch({ type: "disconnect" });
+      return;
+    }
     if (next.kind !== "x") disconnectSmart();
     void activateSavedWallet(next.address).then(() => {
+      if (isDismissed(next.address)) return;
       if (next.kind !== "x") pinSavedProvider(next.address);
       readCash(next.address)
         .catch(() => 0)
         .then((cash) => {
+          if (isDismissed(next.address)) return;
           setLinked(readLinked());
           dispatch({ type: "wallet", address: next.address, cash });
         });
@@ -365,7 +374,15 @@ function Shell() {
   useEffect(() => {
     const onDisconnect = (event: Event) => {
       const address = (event as CustomEvent<string>).detail;
-      const wallet = readLinked().find((item) => item.address.toLowerCase() === String(address).toLowerCase());
+      const wallet =
+        readLinked().find((item) => item.address.toLowerCase() === String(address).toLowerCase()) ??
+        (address
+          ? {
+              address: String(address),
+              name: "X wallet",
+              kind: (describeSmartWallet(String(address))?.kind ?? "x") as LinkedWallet["kind"],
+            }
+          : null);
       if (wallet) disconnectOne(wallet);
     };
     window.addEventListener("gapline:disconnect", onDisconnect);

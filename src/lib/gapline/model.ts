@@ -1171,19 +1171,24 @@ export function dryRun(rule: CompiledRule, positions: Position[], cash: number, 
   return { fired: true, reason: `Max drift is ${drift.toFixed(1)}%.`, orders: plan };
 }
 
-export function explainCopy(b: Book): string {
+export function explainCopy(b: Book, now = new Date()): string {
   const call = classify(b);
   const advice = advise(b, 10);
   const gap = gapOf(b);
+  const clock = marketClock(now);
+  const session = clock.open
+    ? `The cash market is open and closes in ${formatRemain(clock.at - now.getTime())}.`
+    : `The cash market is closed and opens in ${formatRemain(clock.at - now.getTime())}.`;
+  const prints = `Right now xStocks is ${formatUsd(b.venues.xstocks.price)}, bStocks is ${formatUsd(b.venues.bstocks.price)}, and Ondo is ${formatUsd(b.venues.ondo.price)}.`;
   const gapLine =
     gap == null
-      ? `${b.symbol} has no Friday cash close, so Gapline will not call it a weekend gap.`
-      : `${b.symbol} ${b.venues.bstocks.token} prints ${formatUsd(b.venues.bstocks.price)} against a frozen reference of ${formatUsd(b.reference ?? 0)} (${formatBps(gap)}).`;
+      ? `${b.symbol} has no cash close on this feed, so this is the live token print, not a weekend gap.`
+      : `${b.symbol} is ${formatBps(gap)} versus the cash reference of ${formatUsd(b.reference ?? 0)}.`;
   const carry =
     advice.carryBps == null
       ? ""
-      : ` Ondo (${b.venues.ondo.token}) is ${formatBps(advice.carryBps)} versus bStocks. ${advice.carryNotArb ? "That premium is total-return carry, not a second price for the same share." : "The premium is wide enough to look past carry."}`;
-  return `${gapLine} Call: ${call.label}. ${call.detail}${carry} BTC is ${formatBps(MARKET.btcMoveBps)} since the close, and the cash market reopens ${MARKET.nextOpen}. ${b.about}`;
+      : ` Ondo is ${formatBps(advice.carryBps)} versus bStocks. ${advice.carryNotArb ? "That premium is total-return carry, not a second price for the same share." : "The premium is wide enough to look past carry."}`;
+  return `${gapLine} ${prints} Call: ${call.label}. ${call.detail}${carry} Bitcoin is ${formatBps(btcMove())} since the prior close. ${session}`;
 }
 
 export function planQuotes(input: {
